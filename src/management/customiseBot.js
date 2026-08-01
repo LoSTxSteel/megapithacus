@@ -6,7 +6,12 @@ const {
   TextInputStyle,
 } = require('discord.js');
 const { getGuild, updateGuild } = require('../services/storage');
-const { guildEmbed, errorEmbed, parseEmbedColor } = require('../utils/embeds');
+const {
+  guildEmbed,
+  errorEmbed,
+  parseEmbedColor,
+  footerForGuild,
+} = require('../utils/embeds');
 const { brand } = require('../config');
 
 function customiseActionSelect() {
@@ -32,7 +37,7 @@ function customiseActionSelect() {
         },
         {
           label: 'Footer text',
-          description: 'Text shown in embed footers',
+          description: 'Custom footer line (bot name watermark stays)',
           value: 'footer',
         },
         {
@@ -48,13 +53,17 @@ function customisePanel(guild, categorySelect) {
   const custom = guild.botCustom || {};
   const color = custom.embedColor
     ? `#${Number(custom.embedColor).toString(16).padStart(6, '0')}`
-    : `_Default (${brand.color.toString(16).padStart(6, '0')})_`;
+    : `_Default (#${brand.color.toString(16).padStart(6, '0')})_`;
 
-  const embed = guildEmbed(guild, 'Customise Bot')
+  const footerPreview = footerForGuild(guild, 'Preview');
+
+  const embed = guildEmbed(guild, 'Customise Bot', { context: 'Customise' })
     .setDescription(
       [
         'Personalise how Megapithacus looks in **this Discord**.',
-        'Changes apply immediately where possible.',
+        '',
+        `Every embed keeps **${brand.name}** as a watermark (author + footer).`,
+        'Colour and footer text below are what you can change.',
       ].join('\n')
     )
     .addFields(
@@ -76,9 +85,14 @@ function customisePanel(guild, categorySelect) {
         inline: true,
       },
       {
-        name: 'Footer text',
-        value: custom.footerText || `_${brand.name}_`,
+        name: 'Custom footer',
+        value: custom.footerText || '_None — feature label only_',
         inline: true,
+      },
+      {
+        name: 'Footer preview',
+        value: `\`${footerPreview}\``,
+        inline: false,
       }
     );
 
@@ -190,11 +204,12 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('value')
-              .setLabel('Embed footer (blank = default)')
+              .setLabel('Custom footer (blank = default)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
-              .setMaxLength(64)
-              .setValue(String(guild.botCustom?.footerText || '').slice(0, 64))
+              .setMaxLength(48)
+              .setPlaceholder('Your cluster tag — Megapithacus stays')
+              .setValue(String(guild.botCustom?.footerText || '').slice(0, 48))
           )
         );
       await interaction.showModal(modal);
@@ -226,9 +241,9 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
     updateGuild(guildId, { clusterName: value });
     await interaction.reply({
       embeds: [
-        guildEmbed(getGuild(guildId), 'Cluster name updated').setDescription(
-          `Cluster name is now **${value}**.`
-        ),
+        guildEmbed(getGuild(guildId), 'Cluster name updated', {
+          context: 'Customise',
+        }).setDescription(`Cluster name is now **${value}**.`),
       ],
       ephemeral: true,
     });
@@ -254,7 +269,9 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
 
     await interaction.reply({
       embeds: [
-        guildEmbed(getGuild(guildId), 'Nickname updated').setDescription(
+        guildEmbed(getGuild(guildId), 'Nickname updated', {
+          context: 'Customise',
+        }).setDescription(
           value
             ? `Bot nickname set to **${value}**.`
             : 'Bot nickname reset to the Discord default.'
@@ -271,7 +288,9 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
       updateGuild(guildId, { botCustom: { embedColor: null } });
       await interaction.reply({
         embeds: [
-          guildEmbed(getGuild(guildId), 'Embed colour reset').setDescription(
+          guildEmbed(getGuild(guildId), 'Embed colour reset', {
+            context: 'Customise',
+          }).setDescription(
             'Embeds will use the default Megapithacus colour.'
           ),
         ],
@@ -292,7 +311,9 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
     updateGuild(guildId, { botCustom: { embedColor: parsed } });
     await interaction.reply({
       embeds: [
-        guildEmbed(getGuild(guildId), 'Embed colour updated').setDescription(
+        guildEmbed(getGuild(guildId), 'Embed colour updated', {
+          context: 'Customise',
+        }).setDescription(
           `Embed colour set to \`#${parsed.toString(16).padStart(6, '0')}\`.`
         ),
       ],
@@ -304,12 +325,13 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
   if (interaction.isModalSubmit() && id === 'mgmt:modal:custom-footer') {
     const value = interaction.fields.getTextInputValue('value').trim() || null;
     updateGuild(guildId, { botCustom: { footerText: value } });
+    const guild = getGuild(guildId);
     await interaction.reply({
       embeds: [
-        guildEmbed(getGuild(guildId), 'Footer updated').setDescription(
+        guildEmbed(guild, 'Footer updated', { context: 'Customise' }).setDescription(
           value
-            ? `Footer text set to **${value}**.`
-            : 'Footer reset to the default brand name.'
+            ? `Custom footer set to **${value}**.\nPreview: \`${footerForGuild(guild, 'Example')}\``
+            : `Footer reset. Watermark stays: \`${footerForGuild(guild, 'Example')}\``
         ),
       ],
       ephemeral: true,

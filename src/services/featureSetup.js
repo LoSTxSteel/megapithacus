@@ -1,7 +1,7 @@
 const { ChannelType, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { getGuild, updateGuild, syncServersFromNitrado } = require('./storage');
 const { listAllServicesForGuild } = require('./nitrado');
-const { brand } = require('../config');
+const { brandEmbed } = require('../utils/embeds');
 
 const CATEGORY_NAME = 'Megapithacus';
 
@@ -32,11 +32,21 @@ const FEATURE_META = {
   },
   payLogging: {
     key: 'payLogging',
-    label: 'Pay Logging',
-    short: 'Forum for completed-event / pay-request approvals and pay audit logs',
-    forumName: 'pay-logging',
+    label: 'Admin Pay',
+    short: 'Approvals and logs for completed events, pay requests, and payouts',
+    forumName: 'admin-pay',
     forumTopic:
-      'Managers approve completed events and pay requests here. Also logs credits, payouts, and roster changes.',
+      'Admin Pay — approve completed events and pay requests. Also records bonuses and payouts.',
+    refreshMinutes: null,
+  },
+  donationLogging: {
+    key: 'donationLogging',
+    label: 'Donation Logs',
+    short:
+      'Forum logs for donations + donation-stats channel (daily totals, trend chart, monthly review)',
+    forumName: 'donation-logs',
+    forumTopic:
+      'Donation logs — money received (auto-confirmed) and Mark as Delivered for rewards.',
     refreshMinutes: null,
   },
   adminLogging: {
@@ -60,17 +70,18 @@ const FEATURE_META = {
   },
 };
 
-function emptyBoardEmbed(title, blurb, minutes) {
-  return new EmbedBuilder()
-    .setColor(brand.accent)
-    .setTitle(title)
-    .setDescription(
-      `${blurb}\n\nWaiting for the next refresh${
-        minutes ? ` (every **${minutes}** minutes)` : ''
-      }.`
-    )
-    .setFooter({ text: `${brand.name} · feature board` })
-    .setTimestamp();
+function emptyBoardEmbed(title, blurb, minutes, guild = null) {
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle(title)
+      .setDescription(
+        `${blurb}\n\nWaiting for the next refresh${
+          minutes ? ` (every **${minutes}** minutes)` : ''
+        }.`
+      ),
+    guild,
+    { accent: true, context: 'Feature board' }
+  );
 }
 
 async function ensureCategory(discordGuild, existingCategoryId) {
@@ -391,6 +402,7 @@ module.exports = {
   LIVE_BOARD_FEATURES,
   MAP_FORUM_FEATURES,
   CATEGORY_NAME,
+  ensureCategory,
   setupFeature,
   ensureMapForumThreads,
   discoverMapTargets,

@@ -2,8 +2,7 @@ const { EmbedBuilder } = require('discord.js');
 const { getGuild } = require('./storage');
 const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const { formatPingContent } = require('./pingRoles');
-const { brand } = require('../config');
-const { footerForGuild } = require('../utils/embeds');
+const { brandEmbed } = require('../utils/embeds');
 
 function buildBanLogEmbed(ban, guildConfig) {
   const target = ban.targetGamertag || ban.gamertag || 'Unknown';
@@ -18,10 +17,8 @@ function buildBanLogEmbed(ban, guildConfig) {
       )}:R>)`
     : 'Never (permanent)';
 
-  return new EmbedBuilder()
-    .setColor(0xe74c3c)
-    .setTitle('Ban log')
-    .addFields(
+  return brandEmbed(
+    new EmbedBuilder().setTitle('Ban log').addFields(
       { name: 'Who got banned', value: `\`${target}\``, inline: true },
       { name: 'In-game name', value: ban.characterName || '—', inline: true },
       {
@@ -39,17 +36,20 @@ function buildBanLogEmbed(ban, guildConfig) {
       { name: 'Ends', value: endsValue },
       { name: 'Reason', value: ban.reason || 'No reason provided' },
       { name: 'Server list', value: serverList }
-    )
-    .setFooter({ text: `${footerForGuild(guildConfig)} · Ban Logging` })
-    .setTimestamp(ban.startsAt ? new Date(ban.startsAt) : new Date());
+    ),
+    guildConfig,
+    {
+      color: 0xe74c3c,
+      context: 'Ban Logging',
+      timestamp: ban.startsAt ? new Date(ban.startsAt) : new Date(),
+    }
+  );
 }
 
 function buildKickLogEmbed(kick, guildConfig) {
   const target = kick.targetGamertag || kick.gamertag || 'Unknown';
-  return new EmbedBuilder()
-    .setColor(0xe67e22)
-    .setTitle('Kick log')
-    .addFields(
+  return brandEmbed(
+    new EmbedBuilder().setTitle('Kick log').addFields(
       { name: 'Who got kicked', value: `\`${target}\``, inline: true },
       { name: 'In-game name', value: kick.characterName || '—', inline: true },
       {
@@ -60,9 +60,10 @@ function buildKickLogEmbed(kick, guildConfig) {
       { name: 'Kicked by', value: String(kick.moderatorTag || 'Unknown'), inline: true },
       { name: 'Map', value: kick.map || '—', inline: true },
       { name: 'Reason', value: kick.reason || 'No reason provided' }
-    )
-    .setFooter({ text: `${footerForGuild(guildConfig)} · Ban Logging` })
-    .setTimestamp();
+    ),
+    guildConfig,
+    { color: 0xe67e22, context: 'Ban Logging' }
+  );
 }
 
 async function createModLogThread(discordGuild, guildConfig, { name, content, embed }) {
@@ -113,10 +114,8 @@ function buildUnbanLogEmbed(ban, unban, guildConfig) {
     ban?.gamertag ||
     'Unknown';
 
-  return new EmbedBuilder()
-    .setColor(0x2ecc71)
-    .setTitle('Unban log')
-    .addFields(
+  return brandEmbed(
+    new EmbedBuilder().setTitle('Unban log').addFields(
       { name: 'Who got unbanned', value: `\`${target}\``, inline: true },
       { name: 'In-game name', value: ban?.characterName || unban?.characterName || '—', inline: true },
       {
@@ -139,9 +138,10 @@ function buildUnbanLogEmbed(ban, unban, guildConfig) {
         inline: true,
       },
       { name: 'Unban reason', value: unban?.reason || 'No reason provided' }
-    )
-    .setFooter({ text: `${footerForGuild(guildConfig)} · Ban Logging` })
-    .setTimestamp();
+    ),
+    guildConfig,
+    { color: 0x2ecc71, context: 'Ban Logging' }
+  );
 }
 
 /**
@@ -207,27 +207,31 @@ async function postBanReminder(discordGuild, ban, kind) {
       : `**${target}**'s ban has ended. Review / confirm they are unbanned in-game.`;
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(kind === 'expired' ? 0x2ecc71 : 0xf39c12)
-    .setTitle(title)
-    .setDescription(description)
-    .addFields(
-      { name: 'Player', value: `\`${target}\``, inline: true },
-      { name: 'Reason', value: ban.reason || '—', inline: true },
-      { name: 'Original duration', value: ban.duration || '—', inline: true },
-      {
-        name: 'Banned by',
-        value: ban.moderatorTag || '—',
-        inline: true,
-      },
-      {
-        name: 'Ends',
-        value: endsUnix ? `<t:${endsUnix}:F>` : '—',
-        inline: true,
-      }
-    )
-    .setFooter({ text: `${footerForGuild(guildConfig)} · Ban reminders` })
-    .setTimestamp();
+  const embed = brandEmbed(
+    new EmbedBuilder()
+      .setTitle(title)
+      .setDescription(description)
+      .addFields(
+        { name: 'Player', value: `\`${target}\``, inline: true },
+        { name: 'Reason', value: ban.reason || '—', inline: true },
+        { name: 'Original duration', value: ban.duration || '—', inline: true },
+        {
+          name: 'Banned by',
+          value: ban.moderatorTag || '—',
+          inline: true,
+        },
+        {
+          name: 'Ends',
+          value: endsUnix ? `<t:${endsUnix}:F>` : '—',
+          inline: true,
+        }
+      ),
+    guildConfig,
+    {
+      color: kind === 'expired' ? 0x2ecc71 : 0xf39c12,
+      context: 'Ban reminders',
+    }
+  );
 
   const content =
     formatPingContent(

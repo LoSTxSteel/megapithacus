@@ -6,10 +6,10 @@ const {
   setupFeature,
 } = require('./featureSetup');
 const { money, getAdminPay, formatPaymentDetails } = require('./adminPay');
-const { footerForGuild } = require('../utils/embeds');
+const { brandEmbed } = require('../utils/embeds');
 
 /**
- * Ensure the pay-logging forum exists and is enabled (used for manager approvals).
+ * Ensure the Admin Pay forum exists and is enabled (approvals + logs).
  */
 async function ensurePayApprovalForum(discordGuild) {
   const setup = await setupFeature(discordGuild, 'payLogging');
@@ -25,93 +25,109 @@ async function ensurePayApprovalForum(discordGuild) {
   return setup.forum;
 }
 
+const LOG_META = {
+  work: { title: 'Event approved', color: 0x3b82f6 },
+  payout: { title: 'Payout recorded', color: 0x22c55e },
+  credit: { title: 'Bonus added', color: 0xa855f7 },
+  deduction: { title: 'Balance adjusted', color: 0xf97316 },
+  roster: { title: 'Roster update', color: 0x64748b },
+};
+
+function memberLabel(entry) {
+  return entry.userId ? `<@${entry.userId}>` : '—';
+}
+
 function buildPayLogEmbed(entry, { guildConfig, adminPay }) {
   const pay = adminPay || getAdminPay(guildConfig?.id || entry.guildId);
-  const colors = {
-    work: 0x3498db,
-    credit: 0x9b59b6,
-    deduction: 0xe67e22,
-    payout: 0x2ecc71,
-    roster: 0x95a5a6,
+  const meta = LOG_META[entry.type] || {
+    title: 'Admin Pay',
+    color: 0x3b82f6,
   };
 
-  const embed = new EmbedBuilder()
-    .setColor(colors[entry.type] || 0x3498db)
-    .setTitle(`Pay log · ${entry.type}`)
-    .setFooter({ text: `${footerForGuild(guildConfig)} · Pay Logging` })
-    .setTimestamp(entry.at ? new Date(entry.at) : new Date());
+  const embed = brandEmbed(new EmbedBuilder().setTitle(meta.title), guildConfig, {
+    color: meta.color,
+    context: 'Admin Pay',
+    timestamp: entry.at ? new Date(entry.at) : new Date(),
+  });
 
   if (entry.type === 'work') {
-    embed.addFields(
-      { name: 'Admin', value: `<@${entry.userId}>`, inline: true },
-      {
-        name: 'Event type',
-        value: entry.activityLabel || entry.activity || '—',
-        inline: true,
-      },
-      { name: 'Amount', value: money(pay, entry.amount), inline: true }
+    embed.setDescription(
+      [
+        `${memberLabel(entry)} · **${entry.activityLabel || entry.activity || 'Event'}**`,
+        `**${money(pay, entry.amount)}** credited`,
+      ].join('\n')
     );
+    const fields = [];
     if (entry.hostedAt) {
-      embed.addFields({ name: 'Date & time hosted', value: String(entry.hostedAt) });
+      fields.push({ name: 'Hosted', value: String(entry.hostedAt), inline: true });
     }
     if (entry.attendance != null) {
-      embed.addFields({
+      fields.push({
         name: 'Attendance',
         value: String(entry.attendance),
         inline: true,
       });
     }
     if (entry.balanceAfter != null) {
-      embed.addFields({
-        name: 'Balance after',
+      fields.push({
+        name: 'Balance',
         value: money(pay, entry.balanceAfter),
         inline: true,
       });
     }
-    embed.addFields({
-      name: 'By',
-      value: entry.byTag || '—',
-      inline: true,
-    });
+    if (entry.byTag) {
+      fields.push({ name: 'Approved by', value: entry.byTag, inline: true });
+    }
+    if (fields.length) embed.addFields(fields);
   } else if (entry.type === 'payout') {
-    embed.addFields(
-      { name: 'Admin', value: `<@${entry.userId}>`, inline: true },
-      { name: 'Paid', value: money(pay, entry.amount), inline: true },
+    embed.setDescription(
+      `${memberLabel(entry)} paid **${money(pay, entry.amount)}**`
+    );
+    const fields = [
       {
-        name: 'Balance after',
-        value: entry.balanceAfter != null ? money(pay, entry.balanceAfter) : '—',
+        name: 'Remaining',
+        value:
+          entry.balanceAfter != null ? money(pay, entry.balanceAfter) : '—',
         inline: true,
       },
-      { name: 'Recorded by', value: entry.byTag || '—', inline: true }
-    );
+    ];
     if (entry.paymentMethodLabel || entry.paymentMethod) {
-      embed.addFields({
-        name: 'Payment method',
+      fields.push({
+        name: 'Method',
         value: entry.paymentMethodLabel || entry.paymentMethod,
         inline: true,
       });
+    }
+    if (entry.byTag) {
+      fields.push({ name: 'By', value: entry.byTag, inline: true });
+    }
+    embed.addFields(fields);
+    if (entry.paymentDetails) {
       embed.addFields({
-        name: 'Payment details',
+        name: 'Details',
         value: formatPaymentDetails(entry).join('\n').slice(0, 1024),
       });
     }
   } else if (entry.type === 'credit' || entry.type === 'deduction') {
+    embed.setDescription(
+      `${memberLabel(entry)} · **${money(pay, entry.amount)}**`
+    );
     embed.addFields(
-      { name: 'Admin', value: `<@${entry.userId}>`, inline: true },
-      { name: 'Amount', value: money(pay, entry.amount), inline: true },
       {
-        name: 'Balance after',
-        value: entry.balanceAfter != null ? money(pay, entry.balanceAfter) : '—',
+        name: 'Balance',
+        value:
+          entry.balanceAfter != null ? money(pay, entry.balanceAfter) : '—',
         inline: true,
       },
       { name: 'By', value: entry.byTag || '—', inline: true }
     );
   } else if (entry.type === 'roster') {
-    embed.addFields(
-      { name: 'Admin', value: `<@${entry.userId}>`, inline: true },
-      { name: 'Action', value: entry.action || 'updated', inline: true },
-      { name: 'By', value: entry.byTag || '—', inline: true }
+    embed.setDescription(
+      `${memberLabel(entry)} · ${entry.action || 'updated'}`
     );
+    if (entry.byTag) {
+      embed.addFields({ name: 'By', value: entry.byTag, inline: true });
+    }
   }
 
   if (entry.note) {
@@ -119,6 +135,27 @@ function buildPayLogEmbed(entry, { guildConfig, adminPay }) {
   }
 
   return embed;
+}
+
+function payLogThreadName(entry, discordGuild) {
+  let who = 'staff';
+  if (entry.userId) {
+    const member = discordGuild.members.cache.get(entry.userId);
+    who =
+      member?.displayName ||
+      member?.user?.username ||
+      `user-${String(entry.userId).slice(-4)}`;
+  }
+
+  const prefixes = {
+    work: entry.activityLabel || 'Event',
+    payout: 'Payout',
+    credit: 'Bonus',
+    deduction: 'Adjustment',
+    roster: 'Roster',
+  };
+  const prefix = prefixes[entry.type] || 'Admin Pay';
+  return `${prefix} · ${who}`.slice(0, 100);
 }
 
 async function logPayEvent(discordGuild, entry) {
@@ -142,9 +179,8 @@ async function logPayEvent(discordGuild, entry) {
     return { ok: false, reason: 'missing_forum', embed };
   }
 
-  const who = entry.userId ? `user-${entry.userId}` : 'pay';
   const thread = await forum.threads.create({
-    name: `${entry.type}: ${who}`.slice(0, 100),
+    name: payLogThreadName(entry, discordGuild),
     message: { embeds: [embed] },
   });
 

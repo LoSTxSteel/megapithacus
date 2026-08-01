@@ -108,7 +108,8 @@ async function refreshAdminBoard(client, guildId) {
         guildFresh.clusterName,
         mapData.name || server.name,
         mapData.admin || [],
-        mapData.error || 'OK'
+        mapData.error || 'OK',
+        guildFresh
       ),
       setup
     );
@@ -172,7 +173,8 @@ async function refreshChatBoard(client, guildId) {
         guildFresh.clusterName,
         mapData.name || server.name,
         mapData.chat || [],
-        mapData.error || 'OK'
+        mapData.error || 'OK',
+        guildFresh
       ),
       setup
     );

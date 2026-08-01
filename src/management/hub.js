@@ -90,7 +90,7 @@ function gamertagList(tags) {
 }
 
 function homePayload() {
-  const embed = baseEmbed('Megapithacus Management')
+  const embed = baseEmbed('Management', { accent: true, context: 'Hub' })
     .setColor(brand.accent)
     .setDescription(
       [
@@ -103,22 +103,27 @@ function homePayload() {
       {
         name: 'Admin Management',
         value: 'Authorised admins (gamertag) and event staff',
+        inline: true,
       },
       {
         name: 'Server Setup',
         value: 'Add Nitrado tokens so the bot can read your servers',
+        inline: true,
       },
       {
         name: 'Server Management',
         value: 'Ping roles for bans, unbans, kicks, reminders',
+        inline: true,
       },
       {
         name: 'Customise Bot',
-        value: 'Nickname, embed colour, cluster name, footer',
+        value: 'Colour, footer, nickname — **Megapithacus** watermark stays',
+        inline: true,
       },
       {
         name: 'Feature Management',
-        value: 'Pop, Ban, Pay, Admin, Chat logging',
+        value: 'Pop, Ban, Pay, Admin, Chat, Donation logging',
+        inline: true,
       }
     );
 
@@ -310,19 +315,36 @@ function featureSetupText(guild, key) {
     return [
       `Configured: **${configured ? 'Yes' : 'No'}**`,
       `Category: ${category}`,
-      `Log forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
+      `Forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
       '',
-      'Forum threads for managers to approve:',
-      '• Completed events from `/adminpay board`',
-      '• Pay (payout) requests from `/adminpay board`',
+      'Used for:',
+      '• Approving completed events',
+      '• Approving pay requests',
+      '• Recording bonuses and payouts',
       '',
-      'Also logs bonuses, credits, payouts, and roster changes.',
-      '`/adminpay board` creates and enables this forum automatically.',
-      '',
-      'Use `/permissions` to control who can manage Admin Pay / approve.',
+      'Created automatically by `/adminpay board`.',
       !configured
-        ? '_Press **Setup**, or run `/adminpay board` to create the forum._'
-        : '_Ready for approvals and pay logs._',
+        ? '_Press **Setup**, or run `/adminpay board`._'
+        : '_Ready._',
+    ].join('\n');
+  }
+
+  if (key === 'donationLogging') {
+    return [
+      `Configured: **${configured ? 'Yes' : 'No'}**`,
+      `Category: ${category}`,
+      `Forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
+      '',
+      'Used for:',
+      '• Logging PayPal / Stripe payments detected on the receiving account',
+      '• Auto-confirming when money is received via PayPal or Stripe API',
+      '• Mark as Delivered when rewards are given',
+      '• **donation-stats** channel — daily totals, trend chart, 30-day reviews',
+      '',
+      'Created by `/donate` or `/donatemanage`. Configure PayPal/Stripe in `/donatemanage`.',
+      !configured
+        ? '_Press **Setup**, or run `/donate` / `/donatemanage`._'
+        : '_Ready._',
     ].join('\n');
   }
 
@@ -844,25 +866,25 @@ async function handleManagement(interaction) {
         return `• **${name}** — \`${s.id}\` (${s.status || 'unknown'}) · ${item.accountLabel}`;
       });
 
-      const embed = baseEmbed('Nitrado servers found')
-        .setDescription(
-          [
-            `Found **${okItems.length}** service(s) across your saved tokens.`,
-            errors.length
-              ? `_ ${errors.length} account(s) failed: ${errors
-                  .map((e) => `${e.accountLabel} (${e.error})`)
-                  .join('; ')}_`
-              : '',
-            '',
-            ...(lines.length ? lines : ['_No services returned._']),
-            okItems.length > 20 ? `\n_…and ${okItems.length - 20} more_` : '',
-            '',
-            'Use **Sync servers to bot** to import these for `/pop`.',
-          ]
-            .filter(Boolean)
-            .join('\n')
-        )
-        .setFooter({ text: 'Microsoft Store ASE · Nitrado' });
+      const embed = baseEmbed('Nitrado servers found', {
+        context: 'Server Setup',
+      }).setDescription(
+        [
+          `Found **${okItems.length}** service(s) across your saved tokens.`,
+          errors.length
+            ? `_ ${errors.length} account(s) failed: ${errors
+                .map((e) => `${e.accountLabel} (${e.error})`)
+                .join('; ')}_`
+            : '',
+          '',
+          ...(lines.length ? lines : ['_No services returned._']),
+          okItems.length > 20 ? `\n_…and ${okItems.length - 20} more_` : '',
+          '',
+          'Use **Sync servers to bot** to import these for `/pop`.',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
 
       await interaction.editReply({
         embeds: [embed],

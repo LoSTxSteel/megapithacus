@@ -1,7 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { getGuild, listGuildIds, updateGuild } = require('./storage');
 const { queryCluster } = require('./nitrado');
-const { brand } = require('../config');
+const { brandEmbed } = require('../utils/embeds');
 const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -28,12 +28,13 @@ function buildPopEmbed(guildConfig, cluster) {
       ].join('\n')
     : '_Unable to query servers. Check Server Setup tokens and sync._';
 
-  return new EmbedBuilder()
-    .setColor(brand.accent)
-    .setTitle(`${guildConfig.clusterName} — Live Population`)
-    .setDescription(description)
-    .setFooter({ text: 'Megapithacus · Pop Manager · refreshes every 5 minutes' })
-    .setTimestamp();
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle(`${guildConfig.clusterName} — Live Population`)
+      .setDescription(description),
+    guildConfig,
+    { accent: true, context: 'Pop · every 5m' }
+  );
 }
 
 async function refreshGuildPop(client, guildId) {

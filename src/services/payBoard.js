@@ -10,8 +10,9 @@ const {
   activitySummaryLines,
   pendingRequestCount,
   formatPaymentDetails,
+  paymentMethodSummaryLines,
 } = require('./adminPay');
-const { footerForGuild, colorForGuild } = require('../utils/embeds');
+const { brandEmbed } = require('../utils/embeds');
 const { getGuild } = require('./storage');
 
 const BOARD_EVENT_BTN = 'payboard:event';
@@ -29,29 +30,31 @@ function payBoardEmbed(guildId) {
   const pendingEvents = pendingRequestCount(pay, 'event');
   const pendingPayouts = pendingRequestCount(pay, 'payout');
 
-  return new EmbedBuilder()
-    .setColor(colorForGuild(guild))
-    .setTitle('Admin Pay · Staff board')
-    .setDescription(
-      [
-        'Rostered staff can submit from this board. Managers approve in the **pay-logging** forum.',
-        '',
-        '**Log complete event**',
-        'Submit event type, date & time hosted, attendance, then send photo proof in a **DM to the bot**.',
-        'When a manager approves, the event payout is added to your owed balance.',
-        '',
-        '**Request pay**',
-        'Ask managers to pay out some or all of your owed balance.',
-        'You must choose a method: **PayPal**, **Bank transfer (UK only)**, or **Gift card**.',
-        '',
-        '**Event payouts (if approved)**',
-        ...activitySummaryLines(pay),
-        '',
-        `_Pending events: **${pendingEvents}** · Pending pay requests: **${pendingPayouts}**_`,
-      ].join('\n')
-    )
-    .setFooter({ text: `${footerForGuild(guild)} · Pay board` })
-    .setTimestamp();
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle('Admin Pay')
+      .setDescription(
+        [
+          'Staff on the pay roster can submit from here. Managers approve in the **Admin Pay** forum.',
+          '',
+          '**Log complete event**',
+          'Event type, date & time, attendance, then photo proof via **bot DM**.',
+          '',
+          '**Request pay**',
+          'Ask for a payout using one of the accepted methods below.',
+          '',
+          '**Event payouts**',
+          ...activitySummaryLines(pay),
+          '',
+          '**Payout methods**',
+          ...paymentMethodSummaryLines(pay),
+          '',
+          `_Pending · events **${pendingEvents}** · pay requests **${pendingPayouts}**_`,
+        ].join('\n')
+      ),
+    guild,
+    { context: 'Admin Pay' }
+  );
 }
 
 function payBoardComponents() {
@@ -80,64 +83,47 @@ function requestReviewEmbed(guild, request, { requesterTag } = {}) {
   const pay = getAdminPay(guild.id || request.guildId);
   const kind = request.kind || 'event';
   const isPayout = kind === 'payout';
+  const who = requesterTag || `<@${request.userId}>`;
 
   const embed = new EmbedBuilder()
-    .setColor(isPayout ? 0x2ecc71 : 0xf39c12)
-    .setTitle(
-      isPayout
-        ? 'Pay request · pending approval'
-        : 'Completed event · pending approval'
-    )
+    .setTitle(isPayout ? 'Pay request' : 'Event review')
     .setDescription(
-      [
-        `**${requesterTag || `<@${request.userId}>`}** ${
-          isPayout
-            ? 'requested a payout.'
-            : 'logged a completed event.'
-        }`,
-        'Managers with **Admin Pay** access can approve or deny.',
-      ].join('\n')
+      isPayout
+        ? `${who} requested a payout.`
+        : `${who} logged a completed event.`
     )
-    .addFields({ name: 'Admin', value: `<@${request.userId}>`, inline: true });
+    .addFields({ name: 'Staff', value: `<@${request.userId}>`, inline: true });
 
   if (isPayout) {
     embed.addFields(
       {
-        name: 'Amount requested',
+        name: 'Amount',
         value: money(pay, request.amount),
         inline: true,
       },
       {
-        name: 'Balance when requested',
-        value:
-          request.balanceAtRequest != null
-            ? money(pay, request.balanceAtRequest)
-            : '—',
-        inline: true,
-      },
-      {
-        name: 'Payment method',
+        name: 'Method',
         value: request.paymentMethodLabel || request.paymentMethod || '—',
         inline: true,
       },
       {
-        name: 'Payment details',
+        name: 'Details',
         value: formatPaymentDetails(request).join('\n').slice(0, 1024),
       }
     );
   } else {
     embed.addFields(
       {
-        name: 'Event type',
+        name: 'Event',
         value: request.activityLabel || request.activity || '—',
         inline: true,
       },
       {
-        name: 'Amount if approved',
+        name: 'Payout',
         value: money(pay, request.amount),
         inline: true,
       },
-      { name: 'Date & time hosted', value: request.hostedAt || '—' },
+      { name: 'Hosted', value: request.hostedAt || '—', inline: true },
       {
         name: 'Attendance',
         value: String(request.attendance ?? '—'),
@@ -146,21 +132,15 @@ function requestReviewEmbed(guild, request, { requesterTag } = {}) {
     );
 
     const photos = request.photos || [];
-    if (photos.length) {
-      embed.addFields({
-        name: 'Photos',
-        value: `${photos.length} attached (see below)`,
-        inline: true,
-      });
-      if (photos[0]?.url) {
-        embed.setImage(photos[0].url);
+    if (photos.length && photos[0]?.url) {
+      embed.setImage(photos[0].url);
+      if (photos.length > 1) {
+        embed.addFields({
+          name: 'Photos',
+          value: `${photos.length} attached`,
+          inline: true,
+        });
       }
-    } else {
-      embed.addFields({
-        name: 'Photos',
-        value: '_None_',
-        inline: true,
-      });
     }
   }
 
@@ -168,16 +148,16 @@ function requestReviewEmbed(guild, request, { requesterTag } = {}) {
     embed.addFields({ name: 'Notes', value: request.note });
   }
 
-  embed
-    .addFields({
-      name: 'Submitted',
-      value: `<t:${Math.floor(new Date(request.createdAt).getTime() / 1000)}:f>`,
-      inline: true,
-    })
-    .setFooter({ text: `${footerForGuild(getGuild(request.guildId))} · Pay board` })
-    .setTimestamp();
+  embed.addFields({
+    name: 'Submitted',
+    value: `<t:${Math.floor(new Date(request.createdAt).getTime() / 1000)}:R>`,
+    inline: true,
+  });
 
-  return embed;
+  return brandEmbed(embed, getGuild(request.guildId), {
+    color: isPayout ? 0x22c55e : 0xf59e0b,
+    context: 'Admin Pay',
+  });
 }
 
 /** Extra embeds for additional event photos (first is on the main review embed). */
@@ -186,10 +166,11 @@ function requestPhotoEmbeds(request) {
   return photos
     .filter((p) => p?.url)
     .map((p, i) =>
-      new EmbedBuilder()
-        .setColor(0xf39c12)
-        .setTitle(`Event photo ${i + 2}`)
-        .setImage(p.url)
+      brandEmbed(
+        new EmbedBuilder().setTitle(`Photo ${i + 2}`).setImage(p.url),
+        getGuild(request.guildId),
+        { color: 0xf59e0b, context: 'Admin Pay' }
+      )
     );
 }
 

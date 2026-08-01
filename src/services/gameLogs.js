@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { fetchGameLogText, tokenForServer, extractMapName } = require('./nitrado');
-const { brand } = require('../config');
+const { brandEmbed } = require('../utils/embeds');
 
 function classifyLine(line) {
   const trimmed = line.trim();
@@ -108,41 +108,43 @@ function formatLines(entries, emptyMessage) {
     .slice(0, 3900);
 }
 
-function buildMapChatEmbed(clusterName, mapName, entries, note) {
-  return new EmbedBuilder()
-    .setColor(brand.accent)
-    .setTitle(`${mapName} — Chat`)
-    .setDescription(
-      formatLines(entries, '_No in-game chat lines found for this map in the latest pull._')
-    )
-    .addFields(
-      { name: 'Cluster', value: clusterName, inline: true },
-      { name: 'Map', value: mapName, inline: true },
-      { name: 'Notes', value: note || 'OK', inline: true }
-    )
-    .setFooter({ text: 'Megapithacus · Chat Logs · refreshes every 10 minutes' })
-    .setTimestamp();
+function buildMapChatEmbed(clusterName, mapName, entries, note, guild = null) {
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle(`${mapName} — Chat`)
+      .setDescription(
+        formatLines(entries, '_No in-game chat lines found for this map in the latest pull._')
+      )
+      .addFields(
+        { name: 'Cluster', value: clusterName, inline: true },
+        { name: 'Map', value: mapName, inline: true },
+        { name: 'Notes', value: note || 'OK', inline: true }
+      ),
+    guild,
+    { accent: true, context: 'Chat · every 10m' }
+  );
 }
 
-function buildMapAdminEmbed(clusterName, mapName, gameAdminEntries, note) {
+function buildMapAdminEmbed(clusterName, mapName, gameAdminEntries, note, guild = null) {
   const gameLines = gameAdminEntries.slice(-30).map((e) => `• ${e.text}`);
 
-  return new EmbedBuilder()
-    .setColor(brand.accent)
-    .setTitle(`${mapName} — Admin Log`)
-    .setDescription(
-      gameLines.length
-        ? gameLines.join('\n').slice(0, 3900)
-        : '_No in-game admin commands found for this map in the latest Nitrado log pull._'
-    )
-    .addFields(
-      { name: 'Cluster', value: clusterName, inline: true },
-      { name: 'Map', value: mapName, inline: true },
-      { name: 'Source', value: 'Nitrado API / game logs', inline: true },
-      { name: 'Notes', value: note || 'OK', inline: true }
-    )
-    .setFooter({ text: 'Megapithacus · Admin Logging · refreshes every 10 minutes' })
-    .setTimestamp();
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle(`${mapName} — Admin Log`)
+      .setDescription(
+        gameLines.length
+          ? gameLines.join('\n').slice(0, 3900)
+          : '_No in-game admin commands found for this map in the latest Nitrado log pull._'
+      )
+      .addFields(
+        { name: 'Cluster', value: clusterName, inline: true },
+        { name: 'Map', value: mapName, inline: true },
+        { name: 'Source', value: 'Nitrado API / game logs', inline: true },
+        { name: 'Notes', value: note || 'OK', inline: true }
+      ),
+    guild,
+    { accent: true, context: 'Admin log · every 10m' }
+  );
 }
 
 module.exports = {

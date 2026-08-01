@@ -13,7 +13,7 @@ const {
   reasonLabel,
   unbanReasonLabel,
 } = require('./banStore');
-const { brand } = require('../config');
+const { brandEmbed } = require('../utils/embeds');
 
 /** In-memory draft state: key = guildId:userId:profileId:kind */
 const drafts = new Map();
@@ -75,21 +75,22 @@ function banWizardEmbed(profile, draft) {
       ? reasonLabel(draft.reason)
       : '_Not selected_';
 
-  return new EmbedBuilder()
-    .setColor(0xe74c3c)
-    .setTitle('Issue ban')
-    .setDescription(
-      `Configure the ban for **${target}**, then press **Confirm ban**.\nBoth **duration** and **reason** are required.`
-    )
-    .addFields(
-      { name: 'Player', value: `\`${target}\``, inline: true },
-      { name: 'In-game name', value: profile.characterName || '—', inline: true },
-      { name: 'Map', value: profile.map || '—', inline: true },
-      { name: 'Duration', value: banDurationText(draft), inline: true },
-      { name: 'Reason', value: reasonText, inline: true }
-    )
-    .setFooter({ text: `${brand.name} · Ban wizard` })
-    .setTimestamp();
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle('Issue ban')
+      .setDescription(
+        `Configure the ban for **${target}**, then press **Confirm ban**.\nBoth **duration** and **reason** are required.`
+      )
+      .addFields(
+        { name: 'Player', value: `\`${target}\``, inline: true },
+        { name: 'In-game name', value: profile.characterName || '—', inline: true },
+        { name: 'Map', value: profile.map || '—', inline: true },
+        { name: 'Duration', value: banDurationText(draft), inline: true },
+        { name: 'Reason', value: reasonText, inline: true }
+      ),
+    null,
+    { color: 0xe74c3c, context: 'Ban wizard' }
+  );
 }
 
 function banWizardComponents(profileId, draft) {
@@ -157,26 +158,27 @@ function unbanWizardEmbed(profile, activeBan, draft) {
       ? 'Permanent / unknown'
       : '—';
 
-  return new EmbedBuilder()
-    .setColor(0x2ecc71)
-    .setTitle('Issue unban')
-    .setDescription(
-      `Configure the unban for **${target}**, then press **Confirm unban**.\nA **reason** is required.`
-    )
-    .addFields(
-      { name: 'Player', value: `\`${target}\``, inline: true },
-      { name: 'In-game name', value: profile.characterName || '—', inline: true },
-      {
-        name: 'Active ban',
-        value: activeBan
-          ? `${activeBan.duration || 'Unknown'} · ${activeBan.reason || 'No reason'}`
-          : '_No active ban in bot records — unban log will still be created._',
-      },
-      { name: 'Ban ends', value: endsValue, inline: true },
-      { name: 'Unban reason', value: reasonText, inline: true }
-    )
-    .setFooter({ text: `${brand.name} · Unban wizard` })
-    .setTimestamp();
+  return brandEmbed(
+    new EmbedBuilder()
+      .setTitle('Issue unban')
+      .setDescription(
+        `Configure the unban for **${target}**, then press **Confirm unban**.\nA **reason** is required.`
+      )
+      .addFields(
+        { name: 'Player', value: `\`${target}\``, inline: true },
+        { name: 'In-game name', value: profile.characterName || '—', inline: true },
+        {
+          name: 'Active ban',
+          value: activeBan
+            ? `${activeBan.duration || 'Unknown'} · ${activeBan.reason || 'No reason'}`
+            : '_No active ban in bot records — unban log will still be created._',
+        },
+        { name: 'Ban ends', value: endsValue, inline: true },
+        { name: 'Unban reason', value: reasonText, inline: true }
+      ),
+    null,
+    { color: 0x2ecc71, context: 'Unban wizard' }
+  );
 }
 
 function unbanWizardComponents(profileId, draft) {
