@@ -5,6 +5,7 @@ const { startLogBoards } = require('../services/logBoards');
 const { startPlayerTracker } = require('../services/playerTracker');
 const { startBanReminders } = require('../services/banReminders');
 const { startStatusRotation } = require('../services/statusRotation');
+const { startDeployNotify } = require('../services/deployNotify');
 
 module.exports = {
   name: Events.ClientReady,
@@ -16,5 +17,6 @@ module.exports = {
     startLogBoards(client);
     startPlayerTracker();
     startBanReminders(client);
+    startDeployNotify(client);
   },
 };
