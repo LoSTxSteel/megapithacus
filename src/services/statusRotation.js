@@ -5,15 +5,9 @@ const ROTATE_MS = 15 * 1000;
 let timer = null;
 let index = 0;
 
-/** Discord activities don't support markdown; use Mathematical Bold Unicode. */
-function toBold(text) {
-  return String(text).replace(/[A-Za-z0-9]/g, (ch) => {
-    const code = ch.codePointAt(0);
-    if (code >= 48 && code <= 57) return String.fromCodePoint(0x1d7ce + (code - 48)); // 0-9
-    if (code >= 65 && code <= 90) return String.fromCodePoint(0x1d400 + (code - 65)); // A-Z
-    if (code >= 97 && code <= 122) return String.fromCodePoint(0x1d41a + (code - 97)); // a-z
-    return ch;
-  });
+/** Discord activities don't support markdown; underline digits with U+0332. */
+function underlineNumbers(text) {
+  return String(text).replace(/\d/g, (digit) => `${digit}\u0332`);
 }
 
 function collectStats(client) {
@@ -36,11 +30,11 @@ function statusLines(stats) {
   const serverLabel = `${stats.discordServers} server${stats.discordServers === 1 ? '' : 's'}`;
   return [
     {
-      name: toBold(`${memberLabel} in ${serverLabel}`),
+      name: underlineNumbers(`${memberLabel} in ${serverLabel}`),
       type: ActivityType.Watching,
     },
     {
-      name: toBold('ASE Manager @ /help'),
+      name: 'ASE Manager @ /help',
       type: ActivityType.Playing,
     },
   ];
