@@ -1,7 +1,9 @@
 name: Restart Cybrancee bot on push
+
 on:
   push:
-    branches: [main]
+    branches: [main, cursor/admin-pay-board]
+
 jobs:
   restart:
     runs-on: ubuntu-latest
