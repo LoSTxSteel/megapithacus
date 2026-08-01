@@ -32,7 +32,7 @@ function customiseActionSelect() {
         },
         {
           label: 'Embed colour',
-          description: 'Hex colour for bot embeds (e.g. #2ecc71)',
+          description: 'Hex colour for bot embeds (e.g. #e74c3c)',
           value: 'embed-color',
         },
         {
@@ -184,11 +184,11 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('value')
-              .setLabel('Hex colour (e.g. #2ecc71)')
+              .setLabel('Hex colour (e.g. #e74c3c)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
               .setMaxLength(7)
-              .setPlaceholder('#2ecc71')
+              .setPlaceholder('#e74c3c')
               .setValue(hex)
           )
         );
@@ -302,7 +302,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
     const parsed = parseEmbedColor(raw);
     if (parsed == null) {
       await interaction.reply({
-        embeds: [errorEmbed('Enter a valid hex colour like `#2ecc71`.')],
+        embeds: [errorEmbed('Enter a valid hex colour like `#e74c3c`.')],
         ephemeral: true,
       });
       return true;

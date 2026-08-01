@@ -29,7 +29,6 @@ const {
 const { refreshGuildPop } = require('../services/popManager');
 const { refreshGuildLogBoards } = require('../services/logBoards');
 const { baseEmbed, errorEmbed } = require('../utils/embeds');
-const { brand } = require('../config');
 const { customisePanel, handleCustomiseInteraction } = require('./customiseBot');
 const { serverPanel, handleServerInteraction } = require('./serverManagement');
 
@@ -90,9 +89,7 @@ function gamertagList(tags) {
 }
 
 function homePayload() {
-  const embed = baseEmbed('Management', { accent: true, context: 'Hub' })
-    .setColor(brand.accent)
-    .setDescription(
+  const embed = baseEmbed('Management', { context: 'Hub' }).setDescription(
       [
         'Admin hub for **Microsoft Store ASE** on **Nitrado**.',
         '',

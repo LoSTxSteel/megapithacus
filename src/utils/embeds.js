@@ -49,14 +49,11 @@ function watermarkAuthor() {
 
 /**
  * Apply Megapithacus branding to any embed:
- * author watermark, guild colour, watermarked footer, timestamp.
+ * author watermark, red (or guild custom) colour, watermarked footer, timestamp.
+ * Semantic/status colours are ignored — all embeds stay red unless customised.
  */
 function brandEmbed(embed, guild = null, options = {}) {
-  const color =
-    options.color ??
-    (options.accent ? brand.accent : colorForGuild(guild));
-
-  embed.setColor(color);
+  embed.setColor(colorForGuild(guild));
   embed.setAuthor(watermarkAuthor());
   embed.setFooter({ text: footerForGuild(guild, options.context ?? null) });
   if (options.timestamp === false) {
