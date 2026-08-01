@@ -3,6 +3,43 @@ const { brand } = require('../config');
 
 const FOOTER_CUSTOM_MAX = 48;
 
+/** Bot avatar / override URL used on author + footer icons */
+let brandIconUrl = process.env.BRAND_ICON_URL || null;
+
+function setBrandIcon(url) {
+  if (url && String(url).trim()) {
+    brandIconUrl = String(url).trim();
+  }
+}
+
+function getBrandIcon() {
+  return brandIconUrl || null;
+}
+
+/** Context → emoji for title / author flavour */
+const CONTEXT_ICONS = {
+  Hub: '🛠️',
+  Help: '📘',
+  Customise: '🎨',
+  'Server Setup': '🖥️',
+  Donations: '💝',
+  'Donation stats · UTC': '📊',
+  'Donation stats · monthly': '📊',
+  'Admin Pay': '💰',
+  'Ban Logging': '🔨',
+  'Ban reminders': '⏰',
+  'Ban wizard': '🔨',
+  'Unban wizard': '✅',
+  'Player DB': '👤',
+  'Pop · every 5m': '📈',
+  'Chat · every 10m': '💬',
+  'Admin log · every 10m': '📋',
+  'Feature board': '📌',
+  Error: '⚠️',
+  Success: '✅',
+  Deploy: '🚀',
+};
+
 function parseEmbedColor(value) {
   if (value == null || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -43,19 +80,51 @@ function footerForGuild(guild, context = null) {
   return `${body} · ${brand.name}`.slice(0, 2048);
 }
 
-function watermarkAuthor() {
-  return { name: brand.name };
+function contextEmoji(context) {
+  if (!context) return null;
+  if (CONTEXT_ICONS[context]) return CONTEXT_ICONS[context];
+  const key = Object.keys(CONTEXT_ICONS).find((k) =>
+    String(context).startsWith(k)
+  );
+  return key ? CONTEXT_ICONS[key] : null;
+}
+
+function watermarkAuthor(context = null) {
+  const emoji = contextEmoji(context);
+  const author = {
+    name: emoji ? `${emoji} ${brand.name}` : brand.name,
+  };
+  const icon = getBrandIcon();
+  if (icon) author.iconURL = icon;
+  return author;
+}
+
+function withTitleIcon(embed, context) {
+  const emoji = contextEmoji(context);
+  const title = embed.data?.title;
+  if (!emoji || !title) return;
+  // Don't double-prefix if title already starts with an emoji / same icon
+  if (title.startsWith(emoji) || /^\p{Extended_Pictographic}/u.test(title)) {
+    return;
+  }
+  embed.setTitle(`${emoji} ${title}`);
 }
 
 /**
  * Apply Megapithacus branding to any embed:
- * author watermark, red (or guild custom) colour, watermarked footer, timestamp.
- * Semantic/status colours are ignored — all embeds stay red unless customised.
+ * author/footer icons, context emoji, red colour, watermark, timestamp.
  */
 function brandEmbed(embed, guild = null, options = {}) {
+  const context = options.context ?? null;
+  const icon = getBrandIcon();
+
   embed.setColor(colorForGuild(guild));
-  embed.setAuthor(watermarkAuthor());
-  embed.setFooter({ text: footerForGuild(guild, options.context ?? null) });
+  embed.setAuthor(watermarkAuthor(context));
+
+  const footer = { text: footerForGuild(guild, context) };
+  if (icon) footer.iconURL = icon;
+  embed.setFooter(footer);
+
   if (options.timestamp === false) {
     /* leave unset */
   } else if (options.timestamp instanceof Date || typeof options.timestamp === 'number') {
@@ -63,6 +132,23 @@ function brandEmbed(embed, guild = null, options = {}) {
   } else {
     embed.setTimestamp();
   }
+
+  if (options.titleIcon !== false) {
+    withTitleIcon(embed, context);
+  }
+
+  // Thumbnail: bot avatar on panels/boards; skip dense log embeds unless asked
+  const wantThumb =
+    options.thumbnail === true ||
+    (options.thumbnail !== false &&
+      context &&
+      /^(Hub|Help|Customise|Donations|Admin Pay|Player DB|Deploy|Feature board)/i.test(
+        context
+      ));
+  if (wantThumb && icon && !embed.data.thumbnail) {
+    embed.setThumbnail(icon);
+  }
+
   return embed;
 }
 
@@ -75,12 +161,17 @@ function baseEmbed(title, options = {}) {
     accent: options.accent,
     context: options.context ?? null,
     timestamp: options.timestamp,
+    thumbnail: options.thumbnail,
+    titleIcon: options.titleIcon,
   });
   if (options.footer) {
     const text = String(options.footer);
-    embed.setFooter({
+    const footer = {
       text: text.includes(brand.name) ? text : `${text} · ${brand.name}`.slice(0, 2048),
-    });
+    };
+    const icon = getBrandIcon();
+    if (icon) footer.iconURL = icon;
+    embed.setFooter(footer);
   }
   return embed;
 }
@@ -94,6 +185,8 @@ function guildEmbed(guild, title, options = {}) {
     accent: options.accent,
     context: options.context ?? null,
     timestamp: options.timestamp,
+    thumbnail: options.thumbnail,
+    titleIcon: options.titleIcon,
   });
 }
 
@@ -103,7 +196,7 @@ function errorEmbed(message) {
       .setTitle('Something went wrong')
       .setDescription(message),
     null,
-    { color: 0xe74c3c, context: 'Error' }
+    { context: 'Error', thumbnail: true }
   );
 }
 
@@ -111,7 +204,7 @@ function successEmbed(title, description, guild = null) {
   return brandEmbed(
     new EmbedBuilder().setTitle(title).setDescription(description),
     guild,
-    { context: 'Success' }
+    { context: 'Success', thumbnail: true }
   );
 }
 
@@ -125,4 +218,6 @@ module.exports = {
   colorForGuild,
   footerForGuild,
   watermarkAuthor,
+  setBrandIcon,
+  getBrandIcon,
 };
