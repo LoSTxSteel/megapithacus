@@ -21,13 +21,11 @@ function collectStats(client) {
 }
 
 function statusLines(stats) {
+  const memberLabel = `${stats.members} member${stats.members === 1 ? '' : 's'}`;
+  const serverLabel = `${stats.discordServers} server${stats.discordServers === 1 ? '' : 's'}`;
   return [
     {
-      name: `${stats.discordServers} server${stats.discordServers === 1 ? '' : 's'}`,
-      type: ActivityType.Watching,
-    },
-    {
-      name: `${stats.members} member${stats.members === 1 ? '' : 's'}`,
+      name: `${memberLabel} in ${serverLabel}`,
       type: ActivityType.Watching,
     },
     {
