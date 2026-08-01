@@ -16,30 +16,6 @@ function getBrandIcon() {
   return brandIconUrl || null;
 }
 
-/** Context → emoji for title / author flavour */
-const CONTEXT_ICONS = {
-  Hub: '🛠️',
-  Help: '📘',
-  Customise: '🎨',
-  'Server Setup': '🖥️',
-  Donations: '💝',
-  'Donation stats · UTC': '📊',
-  'Donation stats · monthly': '📊',
-  'Admin Pay': '💰',
-  'Ban Logging': '🔨',
-  'Ban reminders': '⏰',
-  'Ban wizard': '🔨',
-  'Unban wizard': '✅',
-  'Player DB': '👤',
-  'Pop · every 5m': '📈',
-  'Chat · every 10m': '💬',
-  'Admin log · every 10m': '📋',
-  'Feature board': '📌',
-  Error: '⚠️',
-  Success: '✅',
-  Deploy: '🚀',
-};
-
 function parseEmbedColor(value) {
   if (value == null || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -80,46 +56,23 @@ function footerForGuild(guild, context = null) {
   return `${body} · ${brand.name}`.slice(0, 2048);
 }
 
-function contextEmoji(context) {
-  if (!context) return null;
-  if (CONTEXT_ICONS[context]) return CONTEXT_ICONS[context];
-  const key = Object.keys(CONTEXT_ICONS).find((k) =>
-    String(context).startsWith(k)
-  );
-  return key ? CONTEXT_ICONS[key] : null;
-}
-
-function watermarkAuthor(context = null) {
-  const emoji = contextEmoji(context);
-  const author = {
-    name: emoji ? `${emoji} ${brand.name}` : brand.name,
-  };
+function watermarkAuthor() {
+  const author = { name: brand.name };
   const icon = getBrandIcon();
   if (icon) author.iconURL = icon;
   return author;
 }
 
-function withTitleIcon(embed, context) {
-  const emoji = contextEmoji(context);
-  const title = embed.data?.title;
-  if (!emoji || !title) return;
-  // Don't double-prefix if title already starts with an emoji / same icon
-  if (title.startsWith(emoji) || /^\p{Extended_Pictographic}/u.test(title)) {
-    return;
-  }
-  embed.setTitle(`${emoji} ${title}`);
-}
-
 /**
  * Apply Megapithacus branding to any embed:
- * author/footer icons, context emoji, red colour, watermark, timestamp.
+ * author/footer icons, red colour, watermark, timestamp.
  */
 function brandEmbed(embed, guild = null, options = {}) {
   const context = options.context ?? null;
   const icon = getBrandIcon();
 
   embed.setColor(colorForGuild(guild));
-  embed.setAuthor(watermarkAuthor(context));
+  embed.setAuthor(watermarkAuthor());
 
   const footer = { text: footerForGuild(guild, context) };
   if (icon) footer.iconURL = icon;
@@ -133,16 +86,11 @@ function brandEmbed(embed, guild = null, options = {}) {
     embed.setTimestamp();
   }
 
-  if (options.titleIcon !== false) {
-    withTitleIcon(embed, context);
-  }
-
-  // Thumbnail: bot avatar on panels/boards; skip dense log embeds unless asked
   const wantThumb =
     options.thumbnail === true ||
     (options.thumbnail !== false &&
       context &&
-      /^(Hub|Help|Customise|Donations|Admin Pay|Player DB|Deploy|Feature board)/i.test(
+      /^(Hub|Help|Customise|Donations|Admin Pay|Player DB|Deploy|Feature board|Announce)/i.test(
         context
       ));
   if (wantThumb && icon && !embed.data.thumbnail) {
@@ -162,7 +110,6 @@ function baseEmbed(title, options = {}) {
     context: options.context ?? null,
     timestamp: options.timestamp,
     thumbnail: options.thumbnail,
-    titleIcon: options.titleIcon,
   });
   if (options.footer) {
     const text = String(options.footer);
@@ -186,7 +133,6 @@ function guildEmbed(guild, title, options = {}) {
     context: options.context ?? null,
     timestamp: options.timestamp,
     thumbnail: options.thumbnail,
-    titleIcon: options.titleIcon,
   });
 }
 

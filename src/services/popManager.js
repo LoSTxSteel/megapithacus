@@ -9,7 +9,7 @@ let timer = null;
 
 function buildPopEmbed(guildConfig, cluster) {
   const lines = (cluster?.results || []).map((server) => {
-    const status = server.online ? '🟢' : '🔴';
+    const status = server.online ? 'Online' : 'Offline';
     const count = server.online
       ? `${server.players} / ${server.maxPlayers || '—'}`
       : server.error

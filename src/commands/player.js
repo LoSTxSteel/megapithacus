@@ -108,7 +108,7 @@ function profileEmbed(profile, guildId) {
         { name: 'Tribe', value: profile.tribeName || '—', inline: true },
         { name: 'Tribe ID', value: profile.tribeId ? `\`${profile.tribeId}\`` : '—', inline: true },
         { name: 'Map', value: profile.map || '—', inline: true },
-        { name: 'Online', value: profile.online ? '🟢 Yes' : '🔴 No', inline: true },
+        { name: 'Online', value: profile.online ? 'Yes' : 'No', inline: true },
         {
           name: 'First seen',
           value: profile.firstSeen

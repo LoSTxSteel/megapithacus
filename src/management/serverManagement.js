@@ -334,12 +334,12 @@ async function handleServerInteraction(interaction, { categorySelect }) {
 
       await interaction.editReply({
         ...serverPowerPanel(getGuild(guildId), categorySelect, serviceId, guildId),
-        content: `✅ Sent **${action}** to **${server.name || serviceId}**.`,
+        content: `Sent **${action}** to **${server.name || serviceId}**.`,
       });
     } catch (error) {
       await interaction.editReply({
         ...serverPowerPanel(getGuild(guildId), categorySelect, serviceId, guildId),
-        content: `❌ ${action} failed: ${error.message}`,
+        content: `${action} failed: ${error.message}`,
       });
     }
     return true;

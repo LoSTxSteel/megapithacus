@@ -195,13 +195,13 @@ async function postBanReminder(discordGuild, ban, kind) {
   let title = 'Ban reminder';
   let description = '';
   if (kind === '24h') {
-    title = '⏰ Ban ending in under 24 hours';
+    title = 'Ban ending in under 24 hours';
     description = `Admin reminder: **${target}**'s ban ends <t:${endsUnix}:R>.`;
   } else if (kind === '1h') {
-    title = '⏰ Ban ending in under 1 hour';
+    title = 'Ban ending in under 1 hour';
     description = `Admin reminder: **${target}**'s ban ends <t:${endsUnix}:R>.`;
   } else if (kind === 'expired') {
-    title = '✅ Ban expired';
+    title = 'Ban expired';
     description = ban.autoUnbannedAt
       ? `**${target}**'s ban has ended. Megapithacus processed the expiry (Nitrado unban attempted if servers were linked).`
       : `**${target}**'s ban has ended. Review / confirm they are unbanned in-game.`;
@@ -237,11 +237,11 @@ async function postBanReminder(discordGuild, ban, kind) {
     formatPingContent(
       guildConfig,
       'reminder',
-      kind === 'expired' ? '✅ **Ban expired — admin notice**' : '⚠️ **Admin ban reminder**'
+      kind === 'expired' ? '**Ban expired — admin notice**' : '**Admin ban reminder**'
     ) ||
     (kind === 'expired'
-      ? '✅ **Ban expired — admin notice**'
-      : '⚠️ **Admin ban reminder**');
+      ? '**Ban expired — admin notice**'
+      : '**Admin ban reminder**');
 
   // Prefer posting into the original ban log thread so staff see it immediately
   if (ban.banLogThreadId) {

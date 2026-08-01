@@ -20,12 +20,13 @@ module.exports = {
           name: 'Everyone',
           value: [
             '`/help` — this message',
-            '`/subscribe` — subscribe info (or DM the bot `subscribe`)',
+            '`/subscribe` — opt in to announcement DMs (or DM the bot `subscribe`)',
           ].join('\n'),
         },
         {
           name: 'Admins',
           value: [
+            '`/announce` — DM subscribers (discounts, updates, other)',
             '`/setup` — wipe & recreate logging channels + **Megapithacus** admin role (server power)',
             '`/management` — admin hub:',
             '• **Admin Management** — authorised admins & event staff',

@@ -118,7 +118,7 @@ async function ensureBrandLogo(client) {
   try {
     const attachment = new AttachmentBuilder(file, { name: LOGO_NAME });
     const msg = await channel.send({
-      content: '🦍 **Megapithacus** brand icon (used on embed footers — safe to leave).',
+      content: '**Megapithacus** brand icon (used on embed footers — safe to leave).',
       files: [attachment],
     });
     const uploaded = msg.attachments.first();

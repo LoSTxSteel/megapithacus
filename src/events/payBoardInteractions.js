@@ -17,7 +17,8 @@ const {
   approvePayRequest,
   denyPayRequest,
   money,
-  PAYMENT_METHODS,
+  listEnabledPaymentMethods,
+  getPaymentMethod,
   formatPaymentDetails,
 } = require('../services/adminPay');
 const {
@@ -103,19 +104,12 @@ function reviewPayload(guild, request, interaction) {
   });
   const photoEmbeds = requestPhotoEmbeds(request);
   const components = requestReviewComponents(request.id);
-  const kind = request.kind || 'event';
-  const content =
-    kind === 'payout'
-      ? `💵 **Pay request** from <@${request.userId}> — managers please review.`
-      : `📋 **Completed event** from <@${request.userId}> — managers please review.`;
-
   const files = (request.photos || []).slice(0, MAX_EVENT_PHOTOS).map((p, i) => ({
     attachment: p.url,
     name: p.name || `event-photo-${i + 1}.png`,
   }));
 
   return {
-    content,
     embeds: [embed, ...photoEmbeds].slice(0, 10),
     components,
     files,
@@ -138,14 +132,19 @@ async function notifyManagers(interaction, request) {
   try {
     forum = await ensurePayApprovalForum(guild);
     const kind = request.kind || 'event';
+    const who =
+      interaction.member?.displayName ||
+      interaction.user.username ||
+      'staff';
+    const threadName = (
+      kind === 'payout'
+        ? `Payout · ${who}`
+        : `${request.activityLabel || 'Event'} · ${who}`
+    ).slice(0, 100);
+
     await forum.threads.create({
-      name: (
-        kind === 'payout'
-          ? `pay-request: ${interaction.user.username}`
-          : `event: ${request.activityLabel || 'event'}`
-      ).slice(0, 100),
+      name: threadName,
       message: {
-        content: payload.content,
         embeds: payload.embeds,
         components: payload.components,
         files: payload.files.length ? payload.files : undefined,
@@ -390,6 +389,19 @@ async function handlePayBoardInteraction(interaction) {
       return true;
     }
 
+    const methods = listEnabledPaymentMethods(gate.pay);
+    if (!methods.length) {
+      await interaction.reply({
+        embeds: [
+          errorEmbed(
+            'No payout methods are configured.\nAsk a manager to add some in `/adminpay manage` → **Edit payout methods**.'
+          ),
+        ],
+        ephemeral: true,
+      });
+      return true;
+    }
+
     await interaction.reply({
       embeds: [
         guildEmbed(getGuild(guildId), 'Request pay').setDescription(
@@ -397,9 +409,7 @@ async function handlePayBoardInteraction(interaction) {
             `Owed balance: **${money(gate.pay, staff.balance)}**`,
             '',
             'Choose how you want to be paid:',
-            '• **PayPal**',
-            '• **Bank transfer (UK only)**',
-            '• **Gift card**',
+            ...methods.map((m) => `• **${m.label}**`),
           ].join('\n')
         ),
       ],
@@ -409,9 +419,12 @@ async function handlePayBoardInteraction(interaction) {
             .setCustomId(BOARD_PAY_METHOD_SELECT)
             .setPlaceholder('Select payment method')
             .addOptions(
-              PAYMENT_METHODS.map((m) => ({
+              methods.slice(0, 25).map((m) => ({
                 label: m.label.slice(0, 100),
-                description: (m.description || '').slice(0, 100),
+                description: (m.description || m.fields?.[0]?.label || '').slice(
+                  0,
+                  100
+                ),
                 value: m.value,
               }))
             )
@@ -424,7 +437,7 @@ async function handlePayBoardInteraction(interaction) {
 
   // —— Payment method chosen → details modal ——
   if (interaction.isStringSelectMenu() && id === BOARD_PAY_METHOD_SELECT) {
-    const method = interaction.values[0];
+    const methodValue = interaction.values[0];
     const gate = rosterGate(interaction, guildId);
     if (!gate.ok) {
       await interaction.reply({
@@ -434,109 +447,61 @@ async function handlePayBoardInteraction(interaction) {
       return true;
     }
 
-    const staff = findStaff(gate.pay, interaction.user.id);
-    const amountField = new TextInputBuilder()
-      .setCustomId('amount')
-      .setLabel('Amount to request')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(false)
-      .setMaxLength(12)
-      .setPlaceholder(
-        `Leave blank for full balance (${money(gate.pay, staff.balance)})`
-      );
-
-    const noteField = new TextInputBuilder()
-      .setCustomId('note')
-      .setLabel('Optional notes')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false)
-      .setMaxLength(200);
-
-    let modal;
-    if (method === 'paypal') {
-      modal = new ModalBuilder()
-        .setCustomId('payboard:payout-modal:paypal')
-        .setTitle('PayPal payout details')
-        .addComponents(
-          new ActionRowBuilder().addComponents(amountField),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('paypalEmail')
-              .setLabel('PayPal email')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(120)
-              .setPlaceholder('you@example.com')
-          ),
-          new ActionRowBuilder().addComponents(noteField)
-        );
-    } else if (method === 'bank_uk') {
-      modal = new ModalBuilder()
-        .setCustomId('payboard:payout-modal:bank_uk')
-        .setTitle('UK bank transfer details')
-        .addComponents(
-          new ActionRowBuilder().addComponents(amountField),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('accountName')
-              .setLabel('Account name')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(80)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('sortCode')
-              .setLabel('Sort code (UK)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(10)
-              .setPlaceholder('12-34-56')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('accountNumber')
-              .setLabel('Account number (UK, 8 digits)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(8)
-              .setPlaceholder('12345678')
-          ),
-          new ActionRowBuilder().addComponents(noteField)
-        );
-    } else if (method === 'giftcard') {
-      modal = new ModalBuilder()
-        .setCustomId('payboard:payout-modal:giftcard')
-        .setTitle('Gift card payout details')
-        .addComponents(
-          new ActionRowBuilder().addComponents(amountField),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('giftcardType')
-              .setLabel('Gift card type')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(80)
-              .setPlaceholder('e.g. Amazon UK, Steam')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('giftcardEmail')
-              .setLabel('Email to receive gift card')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-              .setMaxLength(120)
-              .setPlaceholder('you@example.com')
-          ),
-          new ActionRowBuilder().addComponents(noteField)
-        );
-    } else {
+    const method = getPaymentMethod(gate.pay, methodValue);
+    if (!method || method.enabled === false) {
       await interaction.reply({
-        embeds: [errorEmbed('Unknown payment method.')],
+        embeds: [errorEmbed('That payout method is not available.')],
         ephemeral: true,
       });
       return true;
     }
+
+    const staff = findStaff(gate.pay, interaction.user.id);
+    const rows = [
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('amount')
+          .setLabel('Amount to request')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(12)
+          .setPlaceholder(
+            `Leave blank for full balance (${money(gate.pay, staff.balance)})`
+          )
+      ),
+    ];
+
+    for (const field of (method.fields || []).slice(0, 3)) {
+      const input = new TextInputBuilder()
+        .setCustomId(field.id)
+        .setLabel(field.label.slice(0, 45))
+        .setStyle(TextInputStyle.Short)
+        .setRequired(field.required !== false)
+        .setMaxLength(field.maxLength || 120);
+      if (field.placeholder) {
+        input.setPlaceholder(field.placeholder.slice(0, 100));
+      }
+      rows.push(new ActionRowBuilder().addComponents(input));
+    }
+
+    // Discord modals allow max 5 rows — keep room for optional note when possible
+    if (rows.length < 5) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('note')
+            .setLabel('Optional notes')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setMaxLength(200)
+        )
+      );
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`payboard:payout-modal:${method.value}`)
+      .setTitle(`${method.label} details`.slice(0, 45))
+      .addComponents(...rows);
 
     await interaction.showModal(modal);
     return true;
@@ -759,8 +724,8 @@ async function handlePayBoardInteraction(interaction) {
             `Amount if approved: **${money(result.pay, result.request.amount)}**`,
             '',
             result.delivered
-              ? 'Posted to the **pay-logging** forum for managers to approve.'
-              : 'Could not post to the approval forum. Ask a manager to check bot **Manage Channels** permission, then run `/adminpay board` again.',
+              ? 'Posted to the **Admin Pay** forum for review.'
+              : 'Could not post to the Admin Pay forum. Check **Manage Channels**, then run `/adminpay board` again.',
           ].join('\n')
         ),
       ],
@@ -772,34 +737,35 @@ async function handlePayBoardInteraction(interaction) {
 
   // —— Payout modal submit ——
   if (interaction.isModalSubmit() && id.startsWith('payboard:payout-modal')) {
-    const method =
+    const methodValue =
       id === 'payboard:payout-modal'
         ? null
         : id.slice('payboard:payout-modal:'.length);
 
+    const pay = getAdminPay(guildId);
+    const method = methodValue ? getPaymentMethod(pay, methodValue) : null;
     const paymentDetails = {};
-    if (method === 'paypal') {
-      paymentDetails.paypalEmail =
-        interaction.fields.getTextInputValue('paypalEmail');
-    } else if (method === 'bank_uk') {
-      paymentDetails.accountName =
-        interaction.fields.getTextInputValue('accountName');
-      paymentDetails.sortCode = interaction.fields.getTextInputValue('sortCode');
-      paymentDetails.accountNumber =
-        interaction.fields.getTextInputValue('accountNumber');
-    } else if (method === 'giftcard') {
-      paymentDetails.giftcardType =
-        interaction.fields.getTextInputValue('giftcardType');
-      paymentDetails.giftcardEmail =
-        interaction.fields.getTextInputValue('giftcardEmail');
+    for (const field of method?.fields || []) {
+      try {
+        paymentDetails[field.id] = interaction.fields.getTextInputValue(field.id);
+      } catch {
+        paymentDetails[field.id] = '';
+      }
+    }
+
+    let note = '';
+    try {
+      note = interaction.fields.getTextInputValue('note');
+    } catch {
+      note = '';
     }
 
     const result = createPayoutRequest(guildId, {
       userId: interaction.user.id,
       amount: interaction.fields.getTextInputValue('amount'),
-      note: interaction.fields.getTextInputValue('note'),
+      note,
       byTag: `${interaction.user}`,
-      paymentMethod: method,
+      paymentMethod: methodValue,
       paymentDetails,
     });
 
@@ -814,18 +780,17 @@ async function handlePayBoardInteraction(interaction) {
     const { delivered } = await notifyManagers(interaction, result.request);
     await refreshPayBoard(interaction, guildId);
 
-    const pay = getAdminPay(guildId);
     await interaction.reply({
       embeds: [
         guildEmbed(getGuild(guildId), 'Pay request submitted').setDescription(
           [
-            `Amount requested: **${money(pay, result.request.amount)}**`,
+            `Amount requested: **${money(getAdminPay(guildId), result.request.amount)}**`,
             `Method: **${result.request.paymentMethodLabel}**`,
             ...formatPaymentDetails(result.request),
             '',
             delivered
-              ? 'Posted to the **pay-logging** forum for managers to approve.'
-              : 'Could not post to the approval forum. Ask a manager to check bot permissions.',
+              ? 'Posted to the **Admin Pay** forum for review.'
+              : 'Could not post to the Admin Pay forum. Check bot permissions.',
           ].join('\n')
         ),
       ],
@@ -941,7 +906,7 @@ async function handlePayBoardInteraction(interaction) {
       }
 
       await interaction.update({
-        content: `✅ Approved by <@${interaction.user.id}>`,
+        content: `Approved by <@${interaction.user.id}>`,
         embeds: [
           guildEmbed(
             getGuild(targetGuildId),
@@ -1000,7 +965,7 @@ async function handlePayBoardInteraction(interaction) {
       }
 
       await interaction.update({
-        content: `❌ Denied by <@${interaction.user.id}>`,
+        content: `Denied by <@${interaction.user.id}>`,
         embeds: [
           guildEmbed(
             getGuild(targetGuildId),

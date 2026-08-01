@@ -403,7 +403,7 @@ function featuresPanel(guild) {
   const lines = Object.keys(FEATURE_META).map((key) => {
     const enabled = isFeatureEnabled(guild, key);
     const configured = isFeatureConfigured(guild, key);
-    return `${enabled ? '🟢' : '🔴'} **${FEATURE_META[key].label}**${
+    return `${enabled ? 'ON' : 'OFF'} **${FEATURE_META[key].label}**${
       configured ? '' : ' _(needs setup)_'
     }`;
   });
@@ -435,7 +435,7 @@ function featureDetailPanel(guild, key) {
     .addFields(
       {
         name: 'Status',
-        value: enabled ? '🟢 **Turned on**' : '🔴 **Turned off**',
+        value: enabled ? '**Turned on**' : '**Turned off**',
         inline: true,
       },
       {
