@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { dataDirFrom } = require('../utils/paths');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = dataDirFrom(__dirname);
 const GUILDS_FILE = path.join(DATA_DIR, 'guilds.json');
 
 function ensureStore() {
@@ -29,6 +30,12 @@ function defaultFeatureSetup() {
     popManager: { forumId: null, threadId: null, messageId: null },
     banLogging: { forumId: null },
     payLogging: { forumId: null },
+    donationLogging: { forumId: null },
+    donationStats: {
+      channelId: null,
+      lastDailyKey: null,
+      lastMonthlyAt: null,
+    },
     adminLogging: { forumId: null, mapThreads: {} },
     chatLogs: { forumId: null, mapThreads: {} },
   };
@@ -64,14 +71,19 @@ function defaultGuild() {
       popManager: false,
       banLogging: false,
       payLogging: false,
+      donationLogging: false,
+      donationStats: false,
       adminLogging: false,
       chatLogs: false,
     },
     featureSetup: defaultFeatureSetup(),
+    botSetupRoleId: null,
     botCustom: defaultBotCustom(),
     pingRoles: defaultPingRoles(),
     permissions: {
       adminPay: [],
+      donations: [],
+      serverPower: [],
     },
     adminPay: {
       currency: 'GBP',
@@ -79,7 +91,27 @@ function defaultGuild() {
       staff: [],
       ledger: [],
       requests: [],
+      activitiesManaged: false,
       activities: [],
+      paymentMethodsManaged: false,
+      paymentMethods: [],
+    },
+    donations: {
+      methods: [],
+      records: [],
+      statsHistory: [],
+      paypal: {
+        enabled: false,
+        clientId: null,
+        clientSecret: null,
+        mode: 'live',
+        lastSyncAt: null,
+      },
+      stripe: {
+        enabled: false,
+        secretKey: null,
+        lastSyncAt: null,
+      },
     },
     subscription: {
       tier: 'free',
@@ -135,6 +167,8 @@ function getGuild(guildId) {
       ...defaults.permissions,
       ...(current.permissions || {}),
       adminPay: current.permissions?.adminPay || [],
+      donations: current.permissions?.donations || [],
+      serverPower: current.permissions?.serverPower || [],
     },
     adminPay: {
       ...defaults.adminPay,
@@ -143,6 +177,21 @@ function getGuild(guildId) {
       ledger: current.adminPay?.ledger || [],
       requests: current.adminPay?.requests || [],
       activities: current.adminPay?.activities || [],
+    },
+    donations: {
+      ...defaults.donations,
+      ...(current.donations || {}),
+      methods: current.donations?.methods || [],
+      records: current.donations?.records || [],
+      statsHistory: current.donations?.statsHistory || [],
+      paypal: {
+        ...defaults.donations.paypal,
+        ...(current.donations?.paypal || {}),
+      },
+      stripe: {
+        ...defaults.donations.stripe,
+        ...(current.donations?.stripe || {}),
+      },
     },
     subscription: { ...defaults.subscription, ...(current.subscription || {}) },
     servers: current.servers || [],
@@ -177,12 +226,32 @@ function updateGuild(guildId, patch) {
       ledger: patch.adminPay.ledger ?? current.adminPay?.ledger ?? [],
       requests: patch.adminPay.requests ?? current.adminPay?.requests ?? [],
       activities: patch.adminPay.activities ?? current.adminPay?.activities ?? [],
+      paymentMethods:
+        patch.adminPay.paymentMethods ?? current.adminPay?.paymentMethods ?? [],
     };
   }
   if (patch.permissions) {
     next.permissions = {
       ...(current.permissions || {}),
       ...patch.permissions,
+    };
+  }
+  if (patch.donations) {
+    next.donations = {
+      ...(current.donations || {}),
+      ...patch.donations,
+      methods: patch.donations.methods ?? current.donations?.methods ?? [],
+      records: patch.donations.records ?? current.donations?.records ?? [],
+      statsHistory:
+        patch.donations.statsHistory ?? current.donations?.statsHistory ?? [],
+      paypal: {
+        ...(current.donations?.paypal || {}),
+        ...(patch.donations.paypal || {}),
+      },
+      stripe: {
+        ...(current.donations?.stripe || {}),
+        ...(patch.donations.stripe || {}),
+      },
     };
   }
 

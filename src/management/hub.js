@@ -478,7 +478,7 @@ function panelFor(value, guild, guildId) {
     case 'setup':
       return setupPanel(guild);
     case 'server':
-      return serverPanel(guild, categorySelect);
+      return serverPanel(guild, categorySelect, guildId);
     case 'customise':
       return customisePanel(guild, categorySelect);
     case 'features':

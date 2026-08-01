@@ -296,7 +296,11 @@ async function ensureMapForumThreads(discordGuild, forum, featureKey, guildConfi
   return { mapThreads: existing, targets, discovered, errors };
 }
 
-async function setupFeature(discordGuild, featureKey) {
+/**
+ * @param {{ softMaps?: boolean }} [options]
+ * softMaps: create the forum even when no Nitrado tokens are linked yet
+ */
+async function setupFeature(discordGuild, featureKey, options = {}) {
   const meta = FEATURE_META[featureKey];
   if (!meta) {
     throw new Error(`Unknown feature: ${featureKey}`);
@@ -328,7 +332,13 @@ async function setupFeature(discordGuild, featureKey) {
   if (LIVE_BOARD_FEATURES.has(featureKey)) {
     featureState = {
       ...featureState,
-      ...(await ensureLiveBoard(discordGuild, forum, meta, guildConfig)),
+      ...(await ensureLiveBoard(discordGuild, forum, meta, {
+        ...guildConfig,
+        featureSetup: {
+          ...guildConfig.featureSetup,
+          [featureKey]: featureState,
+        },
+      })),
     };
   }
 
@@ -336,32 +346,44 @@ async function setupFeature(discordGuild, featureKey) {
 
   if (MAP_FORUM_FEATURES.has(featureKey)) {
     if (!(guildConfig.nitradoAccounts || []).length) {
-      throw new Error(
-        'Add a Nitrado token in **/management → Server Setup** first, then run Setup again.'
+      if (!options.softMaps) {
+        throw new Error(
+          'Add a Nitrado token in **/management → Server Setup** first, then run Setup again.'
+        );
+      }
+      featureState = {
+        ...featureState,
+        forumId: forum.id,
+        mapThreads: {},
+      };
+      setupExtras = {
+        mapCount: 0,
+        discoverErrors: [
+          'No Nitrado tokens yet — forum created; sync maps later from Server Setup.',
+        ],
+      };
+    } else {
+      const { mapThreads, targets, discovered, errors } = await ensureMapForumThreads(
+        discordGuild,
+        forum,
+        featureKey,
+        guildConfig
       );
+
+      if (discovered?.length) {
+        syncServersFromNitrado(discordGuild.id, discovered);
+      }
+
+      featureState = {
+        ...featureState,
+        forumId: forum.id,
+        mapThreads,
+      };
+      setupExtras = {
+        mapCount: targets.length,
+        discoverErrors: errors,
+      };
     }
-
-    const { mapThreads, targets, discovered, errors } = await ensureMapForumThreads(
-      discordGuild,
-      forum,
-      featureKey,
-      guildConfig
-    );
-
-    // Keep bot server list in sync with whatever Nitrado returned
-    if (discovered?.length) {
-      syncServersFromNitrado(discordGuild.id, discovered);
-    }
-
-    featureState = {
-      ...featureState,
-      forumId: forum.id,
-      mapThreads,
-    };
-    setupExtras = {
-      mapCount: targets.length,
-      discoverErrors: errors,
-    };
   }
 
   const updated = updateGuild(discordGuild.id, {
@@ -397,11 +419,17 @@ function isFeatureConfigured(guild, key) {
   return true;
 }
 
+const KNOWN_CHANNEL_NAMES = new Set([
+  ...Object.values(FEATURE_META).map((m) => m.forumName),
+  'donation-stats',
+]);
+
 module.exports = {
   FEATURE_META,
   LIVE_BOARD_FEATURES,
   MAP_FORUM_FEATURES,
   CATEGORY_NAME,
+  KNOWN_CHANNEL_NAMES,
   ensureCategory,
   setupFeature,
   ensureMapForumThreads,

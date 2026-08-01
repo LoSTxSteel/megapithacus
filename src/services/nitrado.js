@@ -120,6 +120,27 @@ async function sendCommand(serviceId, token, command) {
   });
 }
 
+/** @param {'start'|'stop'|'restart'} action */
+async function gameserverPower(serviceId, token, action) {
+  const allowed = new Set(['start', 'stop', 'restart']);
+  if (!allowed.has(action)) {
+    throw new NitradoError(`Unknown power action: ${action}`, 400);
+  }
+  return apiPost(`/services/${serviceId}/gameservers/${action}`, token);
+}
+
+async function startGameserver(serviceId, token) {
+  return gameserverPower(serviceId, token, 'start');
+}
+
+async function stopGameserver(serviceId, token) {
+  return gameserverPower(serviceId, token, 'stop');
+}
+
+async function restartGameserver(serviceId, token) {
+  return gameserverPower(serviceId, token, 'restart');
+}
+
 function extractMapName(gameserver, fallback) {
   const settings = gameserver.settings || {};
   const configBlock = settings.config || {};
@@ -394,6 +415,10 @@ module.exports = {
   addBanlist,
   removeBanlist,
   sendCommand,
+  gameserverPower,
+  startGameserver,
+  stopGameserver,
+  restartGameserver,
   queryService,
   queryCluster,
   describeService,

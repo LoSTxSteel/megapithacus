@@ -23,7 +23,7 @@ module.exports = {
         {
           name: 'Admins',
           value: [
-            '`/setup` — create Megapithacus category + **Megapithacus** admin role',
+            '`/setup` — wipe & recreate logging channels + **Megapithacus** admin role (server power)',
             '`/management` — admin hub:',
             '• **Admin Management** — authorised admins & event staff',
             '• **Server Setup** — Nitrado tokens & sync',

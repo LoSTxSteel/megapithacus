@@ -13,31 +13,59 @@ const {
   getPingRoleIds,
   pingRolesSummary,
 } = require('../services/pingRoles');
-const { guildEmbed } = require('../utils/embeds');
+const {
+  canManageServerPower,
+  formatAreaRoles,
+} = require('../services/guildPermissions');
+const {
+  tokenForServer,
+  startGameserver,
+  stopGameserver,
+  restartGameserver,
+} = require('../services/nitrado');
+const { guildEmbed, errorEmbed } = require('../utils/embeds');
+const { ADMIN_ROLE_NAME } = require('../services/botSetup');
 
 function serverActionSelect() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('mgmt:server:action')
       .setPlaceholder('Choose a server management tool')
-      .addOptions({
-        label: 'Ping roles',
-        description: 'Roles pinged for bans, unbans, kicks, reminders',
-        value: 'ping-roles',
-      })
+      .addOptions(
+        {
+          label: 'Ping roles',
+          description: 'Roles pinged for bans, unbans, kicks, reminders',
+          value: 'ping-roles',
+        },
+        {
+          label: 'Server power',
+          description: 'Start, stop, or restart synced Nitrado servers',
+          value: 'server-power',
+        }
+      )
   );
 }
 
-function serverPanel(guild, categorySelect) {
+function serverPanel(guild, categorySelect, guildId = null) {
+  const id = guildId || guild.id;
   const embed = guildEmbed(guild, 'Server Management')
     .setDescription(
       [
         'Tools for how Megapithacus behaves on this Discord.',
         '',
-        'Use **Ping roles** so staff roles get notified for moderation events.',
+        '• **Ping roles** — staff pings for moderation logs',
+        `• **Server power** — start / stop / restart (needs **${ADMIN_ROLE_NAME}** or Manage Server)`,
       ].join('\n')
     )
-    .addFields(...pingRolesSummary(guild).slice(0, 4));
+    .addFields(
+      {
+        name: 'Server power roles',
+        value: id
+          ? formatAreaRoles(id, 'serverPower')
+          : '_Run /setup to configure_',
+      },
+      ...pingRolesSummary(guild).slice(0, 3)
+    );
 
   return {
     embeds: [embed],
@@ -119,6 +147,100 @@ function pingRolesPanel(guild, categorySelect, eventKey = 'ban') {
   };
 }
 
+function powerServerSelect(guild, selectedId = null) {
+  const servers = guild.servers || [];
+  const options = servers.slice(0, 25).map((s) => ({
+    label: String(s.name || s.map || s.serviceId).slice(0, 100),
+    description: `Nitrado \`${s.serviceId}\``.slice(0, 100),
+    value: String(s.serviceId),
+    default: selectedId != null && String(s.serviceId) === String(selectedId),
+  }));
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('mgmt:server:power:pick')
+      .setPlaceholder(
+        servers.length ? 'Select a server' : 'No synced servers — sync in Server Setup'
+      )
+      .setDisabled(!servers.length)
+      .addOptions(
+        options.length
+          ? options
+          : [
+              {
+                label: 'No servers',
+                value: 'none',
+                description: 'Sync servers from Server Setup first',
+              },
+            ]
+      )
+  );
+}
+
+function powerActionButtons(serviceId) {
+  const id = serviceId || 'none';
+  const disabled = !serviceId || serviceId === 'none';
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`mgmt:server:power:start:${id}`)
+      .setLabel('Start')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`mgmt:server:power:restart:${id}`)
+      .setLabel('Restart')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`mgmt:server:power:stop:${id}`)
+      .setLabel('Stop')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId('mgmt:back:server')
+      .setLabel('Back')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function serverPowerPanel(guild, categorySelect, selectedId = null, guildId = null) {
+  const id = guildId || guild.id;
+  const servers = guild.servers || [];
+  const selected =
+    selectedId && selectedId !== 'none'
+      ? servers.find((s) => String(s.serviceId) === String(selectedId))
+      : null;
+
+  const embed = guildEmbed(guild, 'Server power', { context: 'Hub' })
+    .setDescription(
+      [
+        'Start, stop, or restart synced **Nitrado** ASE servers.',
+        `Requires the **${ADMIN_ROLE_NAME}** role (or Manage Server / owner).`,
+        '',
+        `Allowed roles: ${
+          id ? formatAreaRoles(id, 'serverPower') : '_Run /setup to configure_'
+        }`,
+      ].join('\n')
+    )
+    .addFields({
+      name: 'Selected',
+      value: selected
+        ? `**${selected.name || selected.map || selected.serviceId}** (\`${selected.serviceId}\`)`
+        : servers.length
+          ? '_Pick a server below_'
+          : '_No synced servers — use Server Setup → Sync servers_',
+    });
+
+  return {
+    embeds: [embed],
+    components: [
+      categorySelect('server'),
+      powerServerSelect(guild, selected?.serviceId || null),
+      powerActionButtons(selected?.serviceId || null),
+    ],
+  };
+}
+
 /**
  * @returns {Promise<boolean>} true if handled
  */
@@ -137,6 +259,90 @@ async function handleServerInteraction(interaction, { categorySelect }) {
       });
       return true;
     }
+    if (action === 'server-power') {
+      if (!canManageServerPower(interaction)) {
+        await interaction.reply({
+          embeds: [
+            errorEmbed(
+              `You need the **${ADMIN_ROLE_NAME}** role (or Manage Server) to use Server power.`
+            ),
+          ],
+          ephemeral: true,
+        });
+        return true;
+      }
+      await interaction.update({
+        ...serverPowerPanel(getGuild(guildId), categorySelect, null, guildId),
+        content: null,
+      });
+      return true;
+    }
+  }
+
+  if (interaction.isStringSelectMenu() && id === 'mgmt:server:power:pick') {
+    if (!canManageServerPower(interaction)) {
+      await interaction.reply({
+        embeds: [errorEmbed('You do not have Server power access.')],
+        ephemeral: true,
+      });
+      return true;
+    }
+    const serviceId = interaction.values[0];
+    await interaction.update({
+      ...serverPowerPanel(getGuild(guildId), categorySelect, serviceId, guildId),
+      content: null,
+    });
+    return true;
+  }
+
+  if (interaction.isButton() && id.startsWith('mgmt:server:power:')) {
+    if (!canManageServerPower(interaction)) {
+      await interaction.reply({
+        embeds: [errorEmbed('You do not have Server power access.')],
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    const parts = id.split(':');
+    // mgmt:server:power:start:SERVICEID
+    const action = parts[3];
+    const serviceId = parts.slice(4).join(':');
+    if (!['start', 'stop', 'restart'].includes(action) || !serviceId || serviceId === 'none') {
+      return true;
+    }
+
+    const guild = getGuild(guildId);
+    const server = (guild.servers || []).find(
+      (s) => String(s.serviceId) === String(serviceId)
+    );
+    if (!server) {
+      await interaction.reply({
+        embeds: [errorEmbed('That server is no longer synced. Re-sync from Server Setup.')],
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    const token = tokenForServer(server, guild);
+    await interaction.deferUpdate();
+
+    try {
+      if (action === 'start') await startGameserver(serviceId, token);
+      else if (action === 'stop') await stopGameserver(serviceId, token);
+      else await restartGameserver(serviceId, token);
+
+      await interaction.editReply({
+        ...serverPowerPanel(getGuild(guildId), categorySelect, serviceId, guildId),
+        content: `✅ Sent **${action}** to **${server.name || serviceId}**.`,
+      });
+    } catch (error) {
+      await interaction.editReply({
+        ...serverPowerPanel(getGuild(guildId), categorySelect, serviceId, guildId),
+        content: `❌ ${action} failed: ${error.message}`,
+      });
+    }
+    return true;
   }
 
   if (interaction.isStringSelectMenu() && id === 'mgmt:server:ping:event') {
@@ -182,5 +388,6 @@ async function handleServerInteraction(interaction, { categorySelect }) {
 module.exports = {
   serverPanel,
   pingRolesPanel,
+  serverPowerPanel,
   handleServerInteraction,
 };

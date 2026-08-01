@@ -8,11 +8,25 @@ const PERMISSION_AREAS = {
     description: 'Add/update paid admins, log work, credits, and payouts',
     commandHint: '`/adminpay manage` or `/adminpay board`',
   },
+  donations: {
+    key: 'donations',
+    label: 'Donations',
+    description: 'Manage donation methods and post / confirm donation embeds',
+    commandHint: '`/donatemanage` or `/donate`',
+  },
+  serverPower: {
+    key: 'serverPower',
+    label: 'Server power',
+    description: 'Start, stop, and restart Nitrado ASE game servers',
+    commandHint: '`/management` → Server Management → Server power',
+  },
 };
 
 function defaultPermissions() {
   return {
     adminPay: [],
+    donations: [],
+    serverPower: [],
   };
 }
 
@@ -22,6 +36,7 @@ function getPermissions(guildId) {
     ...defaultPermissions(),
     ...(guild.permissions || {}),
     adminPay: [...(guild.permissions?.adminPay || [])],
+    donations: [...(guild.permissions?.donations || [])],
   };
 }
 
@@ -84,6 +99,14 @@ function canManageAdminPay(interaction) {
   return canAccessArea(interaction, 'adminPay');
 }
 
+function canManageDonations(interaction) {
+  return canAccessArea(interaction, 'donations');
+}
+
+function canManageServerPower(interaction) {
+  return canAccessArea(interaction, 'serverPower');
+}
+
 function formatAreaRoles(guildId, areaKey) {
   const roles = getPermissions(guildId)[areaKey] || [];
   if (!roles.length) {
@@ -102,5 +125,7 @@ module.exports = {
   isGuildOwner,
   canAccessArea,
   canManageAdminPay,
+  canManageDonations,
+  canManageServerPower,
   formatAreaRoles,
 };
