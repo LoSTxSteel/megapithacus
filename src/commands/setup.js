@@ -93,15 +93,7 @@ module.exports = {
               '1. `/management` → **Server Setup** — add Nitrado tokens & sync maps',
               '2. `/management` → **Server Management** → **Server power** — start / stop / restart',
               '3. `/permissions` — tweak which roles can use Admin Pay, Donations, Server power',
-              rebuild.warnings.length
-                ? `\n_Notes:_\n${rebuild.warnings
-                    .slice(0, 8)
-                    .map((w) => `• ${w}`)
-                    .join('\n')}`
-                : '',
-            ]
-              .filter(Boolean)
-              .join('\n')
+            ].join('\n')
           ),
         ],
       });

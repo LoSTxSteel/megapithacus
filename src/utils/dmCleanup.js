@@ -1,7 +1,7 @@
-const DM_DELETE_AFTER_MS = 10 * 60 * 1000;
+const DM_DELETE_AFTER_MS = 5 * 60 * 1000;
 
 /**
- * Delete a bot DM message after a delay (default 10 minutes).
+ * Delete a bot DM message after a delay (default 5 minutes).
  */
 function scheduleDmDelete(message, delayMs = DM_DELETE_AFTER_MS) {
   if (!message || typeof message.delete !== 'function') return;
