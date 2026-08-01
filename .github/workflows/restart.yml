@@ -1,1 +1,14 @@
-
+name: Restart Cybrancee bot on push
+on:
+  push:
+    branches: [main]
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: fjogeleit/http-request-action@v1.16.3
+        with:
+          url: 'https://panel.cybrancee.com/api/client/servers/${{ vars.SERVER_ID }}/power'
+          method: 'POST'
+          customHeaders: '{"Accept": "application/json", "Content-Type": "application/json", "Authorization": "Bearer ${{ secrets.PTERODACTYL_API_KEY }}"}'
+          data: '{"signal": "restart"}'
