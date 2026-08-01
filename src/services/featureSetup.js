@@ -345,8 +345,9 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
   let setupExtras = {};
 
   if (MAP_FORUM_FEATURES.has(featureKey)) {
-    if (!(guildConfig.nitradoAccounts || []).length) {
-      if (!options.softMaps) {
+    // softMaps: create forum only (used by /setup so we never hang on Nitrado)
+    if (options.softMaps || !(guildConfig.nitradoAccounts || []).length) {
+      if (!options.softMaps && !(guildConfig.nitradoAccounts || []).length) {
         throw new Error(
           'Add a Nitrado token in **/management → Server Setup** first, then run Setup again.'
         );
@@ -354,13 +355,15 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       featureState = {
         ...featureState,
         forumId: forum.id,
-        mapThreads: {},
+        mapThreads: featureState.mapThreads || {},
       };
       setupExtras = {
-        mapCount: 0,
-        discoverErrors: [
-          'No Nitrado tokens yet — forum created; sync maps later from Server Setup.',
-        ],
+        mapCount: Object.keys(featureState.mapThreads || {}).length,
+        discoverErrors: options.softMaps
+          ? [
+              'Map threads skipped during setup — sync maps from Server Setup / Feature setup when ready.',
+            ]
+          : [],
       };
     } else {
       const { mapThreads, targets, discovered, errors } = await ensureMapForumThreads(

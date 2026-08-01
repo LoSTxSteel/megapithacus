@@ -17,7 +17,18 @@ module.exports = {
     try {
       if (interaction.isChatInputCommand()) {
         const command = interaction.client.commands.get(interaction.commandName);
-        if (!command) return;
+        if (!command) {
+          console.warn(`Unknown slash command: /${interaction.commandName}`);
+          await interaction.reply({
+            embeds: [
+              errorEmbed(
+                `Command \`/${interaction.commandName}\` is not loaded on this bot instance. Wait for a restart, or check the console.`
+              ),
+            ],
+            ephemeral: true,
+          });
+          return;
+        }
         await command.execute(interaction);
         return;
       }
