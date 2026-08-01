@@ -20,7 +20,7 @@ module.exports = {
           name: 'Everyone',
           value: [
             '`/help` — this message',
-            '`/subscribe` — how to join the ASE cluster (or DM the bot `subscribe`)',
+            '`/subscribe` — subscribe info (or DM the bot `subscribe`)',
           ].join('\n'),
         },
         {

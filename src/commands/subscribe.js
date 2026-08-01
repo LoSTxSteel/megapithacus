@@ -4,7 +4,7 @@ const { buildSubscribeEmbed } = require('../services/subscribeInfo');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('subscribe')
-    .setDescription('How to join / subscribe to the ASE cluster'),
+    .setDescription('Subscribe info (currently under maintenance)'),
 
   async execute(interaction) {
     await interaction.reply({
