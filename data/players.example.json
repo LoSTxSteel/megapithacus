@@ -1,0 +1,24 @@
+{
+  "guilds": {
+    "YOUR_DISCORD_GUILD_ID": {
+      "profiles": [
+        {
+          "id": "exampleprofile01",
+          "guildId": "YOUR_DISCORD_GUILD_ID",
+          "gamertag": "ShadowRex#4821",
+          "characterName": "Rex “Bones” Hunter",
+          "specimenImplant": "9007199254740991",
+          "tribeName": "Iron Spino Company",
+          "tribeId": "44882117",
+          "map": "The Island",
+          "serviceId": "fake-service-island",
+          "platform": "Microsoft Store",
+          "joins": 7,
+          "online": false,
+          "mapsSeen": ["The Island", "Ragnarok", "Fjordur"],
+          "notes": "FAKE_TEST_PROFILE"
+        }
+      ]
+    }
+  }
+}

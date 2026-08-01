@@ -1,0 +1,28 @@
+{
+  "name": "megapithacus",
+  "version": "1.0.0",
+  "description": "Discord bot for Microsoft Store ASE clusters on Nitrado",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "discord",
+    "ark",
+    "ase",
+    "nitrado",
+    "microsoft-store",
+    "bot"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.6.1"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "bans": [
+    {
+      "id": "exampleban01",
+      "guildId": "YOUR_DISCORD_GUILD_ID",
+      "profileId": "exampleprofile01",
+      "gamertag": "ShadowRex#4821",
+      "characterName": "Rex “Bones” Hunter",
+      "specimenImplant": "9007199254740991",
+      "targetGamertag": "ShadowRex#4821",
+      "reason": "Cheating / Hacks",
+      "duration": "7 days",
+      "durationValue": "7d",
+      "startsAt": "2026-07-31T21:00:00.000Z",
+      "endsAt": "2026-08-07T21:00:00.000Z",
+      "moderatorTag": "Admin#0001",
+      "serverCount": 1,
+      "servers": ["The Island"],
+      "active": true,
+      "reminded24h": false,
+      "reminded1h": false,
+      "expiredNotified": false
+    }
+  ]
+}
