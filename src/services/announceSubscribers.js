@@ -49,9 +49,14 @@ function subscriberCount() {
   return listSubscriberIds().length;
 }
 
+function isSubscriber(userId) {
+  return Boolean(readAll().users[String(userId)]);
+}
+
 module.exports = {
   addSubscriber,
   removeSubscriber,
   listSubscriberIds,
   subscriberCount,
+  isSubscriber,
 };

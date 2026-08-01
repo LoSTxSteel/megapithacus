@@ -53,7 +53,7 @@ module.exports = {
       await interaction.reply({
         embeds: [
           errorEmbed(
-            'No subscribers yet. People must use `/subscribe` or DM the bot `subscribe` first.'
+            'No one has opted in yet. Players must use `/notify` (or DM the bot `notify`) first.'
           ),
         ],
         ephemeral: true,
