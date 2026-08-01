@@ -1,5 +1,5 @@
 const { ActivityType } = require('discord.js');
-const { setBrandIcon } = require('../utils/embeds');
+const { ensureBrandLogo } = require('./brandLogo');
 
 const ROTATE_MS = 15 * 1000;
 
@@ -55,12 +55,9 @@ async function tick(client) {
 
 function startStatusRotation(client) {
   if (timer) return;
-  try {
-    const icon = client?.user?.displayAvatarURL?.({ size: 256, extension: 'png' });
-    if (icon) setBrandIcon(icon);
-  } catch {
-    // ignore — embeds still work without icons
-  }
+  ensureBrandLogo(client).catch((error) => {
+    console.warn('Brand logo setup failed:', error.message);
+  });
   tick(client);
   timer = setInterval(() => {
     tick(client);
