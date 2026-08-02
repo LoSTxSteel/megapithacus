@@ -836,11 +836,19 @@ async function downloadFileText(serviceId, token, filePath) {
   return res.text();
 }
 
-async function seekFileText(serviceId, token, filePath, offset = 0, length = 100000) {
+async function seekFileText(
+  serviceId,
+  token,
+  filePath,
+  offset = 0,
+  length = 100000,
+  mode = 'raw'
+) {
   const params = new URLSearchParams({
     file: filePath,
     offset: String(offset),
     length: String(length),
+    mode: String(mode || 'raw'),
   });
   const data = await apiGet(
     `/services/${serviceId}/gameservers/file_server/seek?${params}`,
@@ -856,6 +864,19 @@ async function seekFileText(serviceId, token, filePath, offset = 0, length = 100
     throw new NitradoError(`Seek failed for ${filePath} (${res.status})`, res.status);
   }
   return res.text();
+}
+
+async function pathSize(serviceId, token, filePath) {
+  try {
+    const params = new URLSearchParams({ path: filePath });
+    const data = await apiGet(
+      `/services/${serviceId}/gameservers/file_server/size?${params}`,
+      token
+    );
+    return Number(data?.size || 0);
+  } catch {
+    return 0;
+  }
 }
 
 async function getServiceLogs(serviceId, token, page = 1) {
@@ -882,6 +903,28 @@ async function listFileBookmarks(serviceId, token) {
 const LOG_TAIL_BYTES = 160000;
 const MAX_LOG_FILES = 4;
 
+/** Warn once per service/file (or once per service for empty) — log boards poll often. */
+const logWarnOnce = new Set();
+function warnLogOnce(key, message) {
+  if (logWarnOnce.has(key)) return;
+  logWarnOnce.add(key);
+  console.warn(message);
+}
+
+function entryBaseName(entry) {
+  return String(entry?.name || entry?.path || '')
+    .split(/[/\\]/)
+    .pop();
+}
+
+function isFileEntry(entry) {
+  if (!entry) return false;
+  const type = String(entry.type || '').toLowerCase();
+  if (type === 'dir' || type === 'directory' || type === 'folder') return false;
+  // Nitrado usually sends type=file; some listings omit type for files.
+  return !type || type === 'file' || type === 'f';
+}
+
 /**
  * Score ASE game-log candidates.
  * AdminCmd / chat / join lines live in ServerGame*.log when -servergamelog is on;
@@ -889,10 +932,7 @@ const MAX_LOG_FILES = 4;
  * rotated ShooterGame_2.log archives (localeCompare sorting picked those wrongly).
  */
 function scoreGameLogEntry(entry) {
-  const name = String(entry?.name || entry?.path || '')
-    .split(/[/\\]/)
-    .pop()
-    .toLowerCase();
+  const name = entryBaseName(entry).toLowerCase();
   if (!name.endsWith('.log')) return 0;
   if (name === 'servergame.log') return 500;
   if (name === 'shootergame.log') return 400;
@@ -904,7 +944,7 @@ function scoreGameLogEntry(entry) {
 
 function pickGameLogFiles(entries, limit = MAX_LOG_FILES) {
   return (entries || [])
-    .filter((e) => e && e.type === 'file' && scoreGameLogEntry(e) > 0)
+    .filter((e) => isFileEntry(e) && scoreGameLogEntry(e) > 0)
     .sort((a, b) => {
       const scoreDiff = scoreGameLogEntry(b) - scoreGameLogEntry(a);
       if (scoreDiff) return scoreDiff;
@@ -916,14 +956,73 @@ function pickGameLogFiles(entries, limit = MAX_LOG_FILES) {
     .slice(0, limit);
 }
 
+function resolveLogPath(entry, baseDir) {
+  if (entry?.path) return String(entry.path).replace(/\/+$/, '');
+  const name = entryBaseName(entry);
+  if (!name) return null;
+  return `${String(baseDir || '').replace(/\/+$/, '')}/${name}`;
+}
+
+/**
+ * Prefer seek/tail — full download often 404s while arkxb holds the log open.
+ * Negative offset is Nitrado's official tailFile pattern.
+ */
 async function readLogFileTail(serviceId, token, entry, baseDir) {
-  const filePath = entry.path || `${baseDir}/${entry.name}`;
-  const size = Number(entry.size || 0);
-  const offset = size > LOG_TAIL_BYTES ? size - LOG_TAIL_BYTES : 0;
-  if (offset > 0) {
-    return seekFileText(serviceId, token, filePath, offset, LOG_TAIL_BYTES);
+  const filePath = resolveLogPath(entry, baseDir);
+  if (!filePath) {
+    throw new NitradoError('Log entry has no path/name', 404);
   }
-  return downloadFileText(serviceId, token, filePath);
+
+  let size = Number(entry.size || 0);
+  if (!size || !Number.isFinite(size)) {
+    size = await pathSize(serviceId, token, filePath);
+  }
+
+  const errors = [];
+
+  // 1) Official tail: negative offset (works without a reliable size).
+  try {
+    const text = await seekFileText(
+      serviceId,
+      token,
+      filePath,
+      -LOG_TAIL_BYTES,
+      LOG_TAIL_BYTES,
+      'raw'
+    );
+    if (text != null) return text;
+  } catch (error) {
+    errors.push(`tail:${error.message}`);
+  }
+
+  // 2) Absolute offset when size is known.
+  if (size > 0) {
+    const offset = size > LOG_TAIL_BYTES ? size - LOG_TAIL_BYTES : 0;
+    try {
+      const text = await seekFileText(
+        serviceId,
+        token,
+        filePath,
+        offset,
+        LOG_TAIL_BYTES,
+        'raw'
+      );
+      if (text != null) return text;
+    } catch (error) {
+      errors.push(`seek:${error.message}`);
+    }
+  }
+
+  // 3) Full download last — often 404 for in-use ShooterGame.log on arkxb.
+  try {
+    return await downloadFileText(serviceId, token, filePath);
+  } catch (error) {
+    errors.push(`download:${error.message}`);
+    throw new NitradoError(
+      `Log read failed for ${filePath} (${errors.join(' | ')})`,
+      error.status || 404
+    );
+  }
 }
 
 function logsDirCandidates(username, game, bookmarks = []) {
@@ -931,6 +1030,8 @@ function logsDirCandidates(username, game, bookmarks = []) {
   if (username && game) {
     dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/Logs`);
     dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/SaveGames/Logs`);
+    // Some Xbox products expose Logs one level under Saved without nesting quirks.
+    dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved`);
   }
   for (const raw of bookmarks) {
     const path = typeof raw === 'string' ? raw : raw?.path || raw?.dir || '';
@@ -942,9 +1043,38 @@ function logsDirCandidates(username, game, bookmarks = []) {
   return [...new Set(dirs)];
 }
 
+/** Preferred ASE log filenames when a Logs dir lists oddly / omits type. */
+const KNOWN_LOG_NAMES = [
+  'ServerGame.log',
+  'ShooterGame.log',
+  'ServerGame_1.log',
+  'ShooterGame_1.log',
+];
+
+function mergeLogEntries(listed, baseDir, { injectKnown = false } = {}) {
+  const byPath = new Map();
+  for (const entry of listed || []) {
+    const path = resolveLogPath(entry, baseDir);
+    if (!path || scoreGameLogEntry({ ...entry, path, name: entryBaseName(entry) }) <= 0) {
+      continue;
+    }
+    byPath.set(path.toLowerCase(), { ...entry, path, name: entryBaseName(entry) });
+  }
+  if (injectKnown) {
+    for (const name of KNOWN_LOG_NAMES) {
+      const path = `${String(baseDir || '').replace(/\/+$/, '')}/${name}`;
+      const key = path.toLowerCase();
+      if (!byPath.has(key)) {
+        byPath.set(key, { type: 'file', name, path, size: 0 });
+      }
+    }
+  }
+  return [...byPath.values()];
+}
+
 /**
  * Best-effort ASE log text from a Nitrado service (Xbox / Microsoft Store).
- * Pulls ServerGame.log (AdminCmd + chat) and ShooterGame.log tails.
+ * Lists Logs dirs, prefers ServerGame.log, then tails existing files via seek.
  */
 async function fetchGameLogText(serviceId, token) {
   const gameserver = await getGameserver(serviceId, token);
@@ -953,6 +1083,7 @@ async function fetchGameLogText(serviceId, token) {
   const chunks = [];
   const fetchedNames = [];
   let listError = null;
+  let sawCandidates = false;
 
   const serviceLogs = await getServiceLogs(serviceId, token, 1);
   if (Array.isArray(serviceLogs) && serviceLogs.length) {
@@ -965,8 +1096,14 @@ async function fetchGameLogText(serviceId, token) {
 
   const bookmarks = await listFileBookmarks(serviceId, token);
   const dirs = logsDirCandidates(username, game, bookmarks);
+  const seenDirs = new Set();
 
-  for (const base of dirs) {
+  for (let i = 0; i < dirs.length; i += 1) {
+    const base = dirs[i];
+    const baseKey = base.toLowerCase();
+    if (seenDirs.has(baseKey)) continue;
+    seenDirs.add(baseKey);
+
     let entries;
     try {
       entries = await listFiles(serviceId, token, base);
@@ -975,11 +1112,29 @@ async function fetchGameLogText(serviceId, token) {
       continue;
     }
 
-    const targets = pickGameLogFiles(entries);
+    const inLogsDir = /\/Logs$/i.test(base);
+
+    // Discover nested Logs/ when listing Saved/.
+    if (!inLogsDir) {
+      for (const e of entries || []) {
+        const isDir =
+          String(e.type || '').toLowerCase() === 'dir' ||
+          String(e.type || '').toLowerCase() === 'directory';
+        if (isDir && entryBaseName(e).toLowerCase() === 'logs') {
+          const sub = (e.path || `${base}/Logs`).replace(/\/$/, '');
+          if (!seenDirs.has(sub.toLowerCase())) dirs.push(sub);
+        }
+      }
+    }
+
+    // Only inject ServerGame/ShooterGame names under real Logs dirs (not Saved/).
+    const merged = mergeLogEntries(entries, base, { injectKnown: inLogsDir });
+    const targets = pickGameLogFiles(merged);
     if (!targets.length) continue;
+    sawCandidates = true;
 
     for (const target of targets) {
-      const label = target.name || target.path || 'log';
+      const label = target.name || entryBaseName(target) || 'log';
       try {
         const text = await readLogFileTail(serviceId, token, target, base);
         if (text && text.trim()) {
@@ -987,7 +1142,10 @@ async function fetchGameLogText(serviceId, token) {
           fetchedNames.push(label);
         }
       } catch (error) {
-        console.warn(
+        // Expected when a listed ShooterGame.log is locked/stale — try next candidate.
+        const unexpected = error.status && error.status !== 404;
+        warnLogOnce(
+          `${serviceId}:${label}:${unexpected ? 'err' : '404'}`,
           `[nitrado] log read failed serviceId=${serviceId} file=${label}: ${error.message}`
         );
       }
@@ -998,10 +1156,12 @@ async function fetchGameLogText(serviceId, token) {
   }
 
   if (!fetchedNames.length && (username || game)) {
-    console.warn(
+    warnLogOnce(
+      `${serviceId}:none`,
       `[nitrado] no ASE game logs found serviceId=${serviceId}` +
         ` username=${username || '?'} game=${game || '?'}` +
-        (listError ? ` listError=${listError}` : '')
+        (listError ? ` listError=${listError}` : '') +
+        (sawCandidates ? ' (listed files but reads failed — often locked arkxb logs)' : '')
     );
   }
 
@@ -1042,6 +1202,7 @@ module.exports = {
   listFiles,
   downloadFileText,
   seekFileText,
+  pathSize,
   getServiceLogs,
   listFileBookmarks,
   fetchGameLogText,

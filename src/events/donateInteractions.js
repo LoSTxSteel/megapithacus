@@ -7,6 +7,7 @@ const {
   TextInputStyle,
   MessageFlags,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   getDonations,
   getDonationCurrency,
@@ -58,7 +59,7 @@ async function handleDonateInteraction(interaction) {
             'Include your Discord username or ID in the PayPal note so staff can match your reward.'
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -68,7 +69,7 @@ async function handleDonateInteraction(interaction) {
     if (!canManageDonations(interaction)) {
       await interaction.reply({
         embeds: [errorEmbed('Only donation managers can link donors.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -88,7 +89,7 @@ async function handleDonateInteraction(interaction) {
             .setMaxValues(1)
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -97,7 +98,7 @@ async function handleDonateInteraction(interaction) {
     if (!canManageDonations(interaction)) {
       await interaction.reply({
         embeds: [errorEmbed('Only donation managers can link donors.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -137,7 +138,7 @@ async function handleDonateInteraction(interaction) {
               'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -146,7 +147,7 @@ async function handleDonateInteraction(interaction) {
     if (!methods.length) {
       await interaction.reply({
         embeds: [errorEmbed('No donation methods configured.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -166,7 +167,7 @@ async function handleDonateInteraction(interaction) {
             .setMaxValues(1)
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -180,7 +181,7 @@ async function handleDonateInteraction(interaction) {
               'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -222,7 +223,7 @@ async function handleDonateInteraction(interaction) {
               'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -231,7 +232,7 @@ async function handleDonateInteraction(interaction) {
     if (!draft?.donorId) {
       await interaction.reply({
         embeds: [errorEmbed('Start again with **Log money received**.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -274,7 +275,7 @@ async function handleDonateInteraction(interaction) {
               'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -284,7 +285,7 @@ async function handleDonateInteraction(interaction) {
     if (!draft?.donorId) {
       await interaction.reply({
         embeds: [errorEmbed('Start again with **Log money received**.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -305,7 +306,7 @@ async function handleDonateInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -323,7 +324,7 @@ async function handleDonateInteraction(interaction) {
           ].join('\n')
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -338,7 +339,7 @@ async function handleDonateInteraction(interaction) {
         embeds: [
           errorEmbed('Only donation managers can update donation status.'),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -360,7 +361,7 @@ async function handleDonateInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -391,7 +392,7 @@ async function handleDonateInteraction(interaction) {
             : `Reward for <@${result.record.donorId}> marked as delivered.`
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }

@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { executeSearch } = require('./player');
 
 /**
- * Top-level alias for `/player search` — live Nitrado online check + fresh profile data.
+ * `/playersearch` — live Nitrado online check + fresh profile data.
  */
 module.exports = {
   data: new SlashCommandBuilder()

@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getUserCredits } = require('../services/credits');
 const { guildEmbed } = require('../utils/embeds');
 const { getGuild } = require('../services/storage');
@@ -21,7 +22,7 @@ module.exports = {
           ].join('\n')
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
   },
 };

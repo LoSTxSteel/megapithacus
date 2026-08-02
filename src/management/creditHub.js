@@ -8,6 +8,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   addCredit,
   removeCredit,
@@ -27,7 +28,7 @@ function denyCredits(interaction) {
           'Ask the server owner to grant your role with `/permissions set` → **Credit manager**.'
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(payload);
@@ -97,7 +98,7 @@ function buildCreditManagerMessage(guildId, { content = null } = {}) {
       ),
     ],
     content,
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -304,7 +305,7 @@ async function handleCreditManagerInteraction(interaction) {
           [`User: <@${userId}>`, formatCredits(credits)].join('\n')
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -363,7 +364,7 @@ async function handleCreditManagerInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -387,7 +388,7 @@ async function handleCreditManagerInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }

@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   buildGamerscoreManagerMessage,
 } = require('../management/gamerscoreHub');
@@ -20,7 +21,7 @@ module.exports = {
               'Ask the server owner to grant your role with `/permissions set` → **Gamerscore manager**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }

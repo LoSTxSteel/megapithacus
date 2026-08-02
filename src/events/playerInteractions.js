@@ -5,6 +5,7 @@ const {
   ActionRowBuilder,
   PermissionFlagsBits,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getPlayerById } = require('../services/playerDb');
 const { refreshProfileLive } = require('../services/playerLiveSearch');
 const { moderatePlayer } = require('../services/playerModeration');
@@ -77,7 +78,7 @@ async function handlePlayerInteraction(interaction) {
   if (!canModerate(interaction)) {
     const payload = {
       embeds: [errorEmbed('You need **Manage Server** to moderate players.')],
-      ephemeral: true,
+      ...EPHEMERAL,
     };
     if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
     else await interaction.reply(payload);
@@ -122,7 +123,7 @@ async function handlePlayerInteraction(interaction) {
     if (!profile) {
       await interaction.reply({
         embeds: [errorEmbed('That player profile no longer exists.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -433,7 +434,7 @@ async function handlePlayerInteraction(interaction) {
     if (!profile) {
       await interaction.reply({
         embeds: [errorEmbed('That player profile no longer exists.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -445,7 +446,7 @@ async function handlePlayerInteraction(interaction) {
             'Invalid duration. Use formats like `45m`, `12h`, `2d`, or `1w` (max 365 days).'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -459,7 +460,7 @@ async function handlePlayerInteraction(interaction) {
     await interaction.reply({
       content: `Custom duration set to **${parsed.label}**. Confirm the ban below.`,
       ...banWizardPayload(profile, draft),
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -472,7 +473,7 @@ async function handlePlayerInteraction(interaction) {
     if (!profile) {
       await interaction.reply({
         embeds: [errorEmbed('That player profile no longer exists.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -485,7 +486,7 @@ async function handlePlayerInteraction(interaction) {
     await interaction.reply({
       content: 'Custom reason saved. Confirm the ban below.',
       ...banWizardPayload(profile, draft),
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -498,7 +499,7 @@ async function handlePlayerInteraction(interaction) {
     if (!profile) {
       await interaction.reply({
         embeds: [errorEmbed('That player profile no longer exists.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -515,7 +516,7 @@ async function handlePlayerInteraction(interaction) {
     await interaction.reply({
       content: 'Custom reason saved. Confirm the unban below.',
       ...unbanWizardPayload(profile, activeBan, draft),
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -525,7 +526,7 @@ async function handlePlayerInteraction(interaction) {
     const profileId = id.slice('player:modal:kick:'.length);
     const reason = interaction.fields.getTextInputValue('reason').trim();
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     const result = await moderatePlayer(interaction.guild, {
       profileId,

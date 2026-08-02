@@ -6,6 +6,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   PERMISSION_AREAS,
   getPermissions,
@@ -54,7 +55,7 @@ async function handlePermissionsInteraction(interaction) {
   if (!isGuildOwner(interaction)) {
     const payload = {
       embeds: [errorEmbed('Only the **Discord server owner** can edit bot permissions.')],
-      ephemeral: true,
+      ...EPHEMERAL,
     };
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(payload);
@@ -146,7 +147,7 @@ module.exports = {
         embeds: [
           errorEmbed('Only the **Discord server owner** can edit bot permissions.'),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -157,7 +158,7 @@ module.exports = {
     if (sub === 'view') {
       await interaction.reply({
         embeds: [permissionsOverview(guildId)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -172,7 +173,7 @@ module.exports = {
             `Cleared roles for **${meta.label}**.\nOnly **Manage Server** can use it now.`
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -214,7 +215,7 @@ module.exports = {
               .setStyle(ButtonStyle.Secondary)
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
     }
   },

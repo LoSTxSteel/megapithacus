@@ -1,4 +1,5 @@
 const { Events } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { errorEmbed } = require('../utils/embeds');
 const { handleManagement } = require('../management/hub');
 const { handlePlayerInteraction } = require('./playerInteractions');
@@ -85,7 +86,7 @@ module.exports = {
                 `Command \`/${interaction.commandName}\` is not loaded on this bot instance. Wait for a restart, or check the console.`
               ),
             ],
-            ephemeral: true,
+            ...EPHEMERAL,
           });
           return;
         }
@@ -140,7 +141,7 @@ module.exports = {
       console.error('Interaction failed:', error);
       const payload = {
         embeds: [errorEmbed('Something went wrong. Check the bot console for details.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       };
 
       try {

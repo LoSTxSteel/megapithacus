@@ -7,6 +7,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild, updateGuild } = require('../services/storage');
 const { canManageServerPower, formatAreaRoles } = require('../services/guildPermissions');
 const {
@@ -33,7 +34,7 @@ function denyPower(interaction) {
           `Need **Manage Server**, the **${ADMIN_ROLE_NAME}** role, or a role granted under **Server power**.`
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(payload);
@@ -305,7 +306,7 @@ async function buildServerManagerMessage(
     embeds: [embed],
     components,
     content,
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -469,7 +470,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced. Re-sync from Server Setup.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -505,7 +506,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!findServer(getGuild(guildId), serviceId)) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -519,7 +520,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!findServer(getGuild(guildId), serviceId)) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -534,7 +535,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -560,7 +561,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -612,7 +613,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -664,7 +665,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -673,7 +674,7 @@ async function handleServerManagerInteraction(interaction) {
     if (!name) {
       await interaction.reply({
         embeds: [errorEmbed('Name cannot be empty.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }

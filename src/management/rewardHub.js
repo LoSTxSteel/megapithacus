@@ -9,6 +9,7 @@ const {
   TextInputStyle,
   ChannelType,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   getRewards,
   setBoostEnabled,
@@ -28,7 +29,7 @@ function denyRewards(interaction) {
           'Ask the server owner to grant your role with `/permissions set` → **Reward manager**.'
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(payload);
@@ -112,7 +113,7 @@ function buildRewardManagerMessage(guildId, { content = null } = {}) {
       ),
     ],
     content,
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -280,7 +281,7 @@ async function handleRewardManagerInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }

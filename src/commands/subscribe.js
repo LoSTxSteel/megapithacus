@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { buildSubscribeEmbed } = require('../services/subscribeInfo');
 const { addSubscriber } = require('../services/announceSubscribers');
 
@@ -11,7 +12,7 @@ module.exports = {
     addSubscriber(interaction.user.id, interaction.guildId);
     await interaction.reply({
       embeds: [buildSubscribeEmbed(interaction.guildId)],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
   },
 };

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { baseEmbed } = require('../utils/embeds');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { brand } = require('../config');
 
 module.exports = {
@@ -45,7 +46,7 @@ module.exports = {
             '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
-            '`/playersearch` / `/player search` — live online check + player profile (ban/unban/kick)',
+            '`/playersearch` — live online check + player profile (ban/unban/kick)',
           ].join('\n'),
         },
         {
@@ -60,6 +61,6 @@ module.exports = {
         }
       );
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], ...EPHEMERAL });
   },
 };

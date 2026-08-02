@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { buildRewardManagerMessage } = require('../management/rewardHub');
 const { canManageRewards } = require('../services/guildPermissions');
 const { errorEmbed } = require('../utils/embeds');
@@ -18,7 +19,7 @@ module.exports = {
               'Ask the server owner to grant your role with `/permissions set` → **Reward manager**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }

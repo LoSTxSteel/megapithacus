@@ -5,6 +5,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild, updateGuild } = require('../services/storage');
 const {
   guildEmbed,
@@ -234,7 +235,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
     if (!value) {
       await interaction.reply({
         embeds: [errorEmbed('Cluster name cannot be empty.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -245,7 +246,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
           context: 'Customise',
         }).setDescription(`Cluster name is now **${value}**.`),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -262,7 +263,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
             `Saved nickname setting, but Discord rejected the change:\n${nickResult.error}`
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -277,7 +278,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
             : 'Bot nickname reset to the Discord default.'
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -294,7 +295,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
             'Embeds will use the default Megapithacus colour.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -303,7 +304,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
     if (parsed == null) {
       await interaction.reply({
         embeds: [errorEmbed('Enter a valid hex colour like `#e74c3c`.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -317,7 +318,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
           `Embed colour set to \`#${parsed.toString(16).padStart(6, '0')}\`.`
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -334,7 +335,7 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
             : `Footer reset. Watermark stays: \`${footerForGuild(guild, 'Example')}\``
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }

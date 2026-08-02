@@ -5,6 +5,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild } = require('../services/storage');
 const {
   PING_EVENTS,
@@ -267,7 +268,7 @@ async function handleServerInteraction(interaction, { categorySelect }) {
               `You need the **${ADMIN_ROLE_NAME}** role (or Manage Server) to use Server power.`
             ),
           ],
-          ephemeral: true,
+          ...EPHEMERAL,
         });
         return true;
       }
@@ -283,7 +284,7 @@ async function handleServerInteraction(interaction, { categorySelect }) {
     if (!canManageServerPower(interaction)) {
       await interaction.reply({
         embeds: [errorEmbed('You do not have Server power access.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -299,7 +300,7 @@ async function handleServerInteraction(interaction, { categorySelect }) {
     if (!canManageServerPower(interaction)) {
       await interaction.reply({
         embeds: [errorEmbed('You do not have Server power access.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -319,7 +320,7 @@ async function handleServerInteraction(interaction, { categorySelect }) {
     if (!server) {
       await interaction.reply({
         embeds: [errorEmbed('That server is no longer synced. Re-sync from Server Setup.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }

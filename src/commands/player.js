@@ -1,11 +1,8 @@
 const {
-  SlashCommandBuilder,
-  PermissionFlagsBits,
   EmbedBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { getPlayerById } = require('../services/playerDb');
 const { searchPlayersLive } = require('../services/playerLiveSearch');
 const {
   listBansForPlayer,
@@ -13,6 +10,7 @@ const {
   durationMeta,
 } = require('../services/banStore');
 const { errorEmbed, brandEmbed, guildEmbed } = require('../utils/embeds');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild } = require('../services/storage');
 
 function kickLinesFromNotes(notes) {
@@ -210,7 +208,7 @@ function profilePayload(profile, guildId) {
   return {
     embeds: [profileEmbed(profile, guildId)],
     components: [moderationMenu(profile.id)],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -248,7 +246,7 @@ function statusBit(profile) {
 }
 
 /**
- * Shared handler for `/player search` and `/playersearch`.
+ * Handler for standalone `/playersearch`.
  * Queries live Nitrado player lists, then shows DB results with fresh status.
  */
 async function executeSearch(interaction) {
@@ -256,7 +254,7 @@ async function executeSearch(interaction) {
   const guildId = interaction.guildId;
   const guild = getGuild(guildId);
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ ...EPHEMERAL });
 
   let results;
   let liveCount = 0;
@@ -326,32 +324,10 @@ async function executeSearch(interaction) {
   });
 }
 
+// Helper module only — slash command is `/playersearch` (see playersearch.js).
 module.exports = {
-  data: new SlashCommandBuilder()
-    .setName('player')
-    .setDescription('Player database tools')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand((sub) =>
-      sub
-        .setName('search')
-        .setDescription('Search players (live online check + latest stored data)')
-        .addStringOption((opt) =>
-          opt
-            .setName('query')
-            .setDescription('Gamertag, IGN, implant, tribe, map, etc.')
-            .setRequired(true)
-        )
-    ),
-
   profilePayload,
   profileEmbed,
   moderationMenu,
   executeSearch,
-
-  async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
-    if (sub === 'search') {
-      await executeSearch(interaction);
-    }
-  },
 };

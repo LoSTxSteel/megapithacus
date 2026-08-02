@@ -7,6 +7,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild, updateGuild } = require('../services/storage');
 const {
   isFeatureEnabled,
@@ -29,7 +30,7 @@ function denyGamerscore(interaction) {
           'Ask the server owner to grant your role with `/permissions set` → **Gamerscore manager**.'
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(payload);
@@ -113,7 +114,7 @@ function buildGamerscoreManagerMessage(guildId, { content = null } = {}) {
       ),
     ],
     content,
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -263,7 +264,7 @@ async function handleGamerscoreManagerInteraction(interaction) {
         embeds: [
           errorEmbed('Enter a whole number between 0 and 50000000.'),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -274,7 +275,7 @@ async function handleGamerscoreManagerInteraction(interaction) {
       ...buildGamerscoreManagerMessage(guildId, {
         content: `Minimum gamerscore set to \`${Math.floor(value)}\`.`,
       }),
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }

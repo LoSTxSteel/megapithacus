@@ -9,6 +9,7 @@ const {
   TextInputStyle,
   PermissionFlagsBits,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   getGuild,
   updateGuild,
@@ -131,7 +132,7 @@ function homePayload() {
       }
     );
 
-  return { embeds: [embed], components: [categorySelect()], ephemeral: true };
+  return { embeds: [embed], components: [categorySelect()], ...EPHEMERAL };
 }
 
 function adminActionSelect(guild) {
@@ -663,7 +664,7 @@ async function handleManagement(interaction) {
   if (!canUseManagement(interaction)) {
     const payload = {
       embeds: [errorEmbed('You need **Manage Server** to use management.')],
-      ephemeral: true,
+      ...EPHEMERAL,
     };
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(payload);
@@ -822,7 +823,7 @@ async function handleManagement(interaction) {
               : 'Enter a valid gamertag.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -833,7 +834,7 @@ async function handleManagement(interaction) {
           `Added gamertag **\`${result.list[result.list.length - 1]}\`**.`
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return;
   }
@@ -1031,7 +1032,7 @@ async function handleManagement(interaction) {
     const label = interaction.fields.getTextInputValue('label');
     const token = interaction.fields.getTextInputValue('token');
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     try {
       const probe = await testToken(token.trim());
@@ -1224,7 +1225,7 @@ async function handleManagement(interaction) {
           embeds: [
             errorEmbed('Enter a whole number between 0 and 50000000.'),
           ],
-          ephemeral: true,
+          ...EPHEMERAL,
         });
         return;
       }
@@ -1235,7 +1236,7 @@ async function handleManagement(interaction) {
         ...gamerscoreSetupWizard(getGuild(guildId), {
           content: `Minimum gamerscore set to \`${Math.floor(value)}\`.`,
         }),
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }

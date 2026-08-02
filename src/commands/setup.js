@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild } = require('../services/storage');
 const { runFullSetup } = require('../services/botSetup');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
@@ -13,7 +14,7 @@ module.exports = {
 
   async execute(interaction) {
     // Defer immediately — Discord requires a response within ~3s
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     try {
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {

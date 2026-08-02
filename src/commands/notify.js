@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   addSubscriber,
   isSubscriber,
@@ -30,7 +31,7 @@ module.exports = {
           interaction.guildId ? getGuild(interaction.guildId) : null
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
   },
 };

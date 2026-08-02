@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   removeSubscriber,
   isSubscriber,
@@ -30,7 +31,7 @@ module.exports = {
               'You were not on the announcement list.\nUse `/notify` if you want DM adverts.'
             ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
   },
 };

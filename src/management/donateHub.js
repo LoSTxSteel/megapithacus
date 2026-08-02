@@ -7,6 +7,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   getDonations,
   methodSummaryLines,
@@ -39,7 +40,7 @@ function denyDonate(interaction) {
           'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp(payload);
@@ -138,7 +139,7 @@ function buildDonateManagePanel(guildId) {
           .setStyle(ButtonStyle.Success)
       ),
     ],
-    ephemeral: true,
+    ...EPHEMERAL,
   };
 }
 
@@ -442,7 +443,7 @@ async function handleDonateHubInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -452,7 +453,7 @@ async function handleDonateHubInteraction(interaction) {
           `**${result.method.label}**\n${result.method.link}`
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }
@@ -481,12 +482,12 @@ async function handleDonateHubInteraction(interaction) {
         embeds: [
           errorEmbed('Both PayPal Client ID and Client Secret are required.'),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     try {
       await testPayPalConnection({ clientId, clientSecret, mode });
@@ -557,12 +558,12 @@ async function handleDonateHubInteraction(interaction) {
     if (!secretKey) {
       await interaction.reply({
         embeds: [errorEmbed('A Stripe secret key is required (`sk_live_…` or `sk_test_…`).')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     try {
       await testStripeConnection(secretKey);
@@ -623,7 +624,7 @@ async function handleDonateHubInteraction(interaction) {
     if (!result.ok) {
       await interaction.reply({
         embeds: [errorEmbed(result.error)],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return true;
     }
@@ -633,7 +634,7 @@ async function handleDonateHubInteraction(interaction) {
           `**${result.method.label}**\n${result.method.link}`
         ),
       ],
-      ephemeral: true,
+      ...EPHEMERAL,
     });
     return true;
   }

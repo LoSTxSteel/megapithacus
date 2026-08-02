@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { buildServerManagerMessage } = require('../management/serverManagerHub');
 const { canManageServerPower } = require('../services/guildPermissions');
 const { errorEmbed } = require('../utils/embeds');
@@ -19,12 +20,12 @@ module.exports = {
               `Need **Manage Server**, the **${ADMIN_ROLE_NAME}** role, or a role granted under **Server power**.`
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
     await interaction.editReply(await buildServerManagerMessage(interaction.guildId));
   },
 };

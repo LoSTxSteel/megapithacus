@@ -6,6 +6,7 @@ const {
   ButtonStyle,
   EmbedBuilder,
 } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const {
   getDonations,
   listEnabledMethods,
@@ -82,7 +83,7 @@ module.exports = {
               'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -95,12 +96,12 @@ module.exports = {
             'No donation methods configured.\nAdd some with `/donatemanage` first.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     try {
       await ensureDonationLogForum(interaction.guild);

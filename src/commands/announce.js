@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EPHEMERAL } = require('../utils/ephemeral');
 const { broadcastAnnounce, ANNOUNCE_TYPES } = require('../services/announce');
 const { subscriberCount } = require('../services/announceSubscribers');
 const { errorEmbed, successEmbed, guildEmbed } = require('../utils/embeds');
@@ -39,7 +40,7 @@ module.exports = {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.reply({
         embeds: [errorEmbed('You need **Manage Server** to use `/announce`.')],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
@@ -56,12 +57,12 @@ module.exports = {
             'No one has opted in yet. Players must use `/notify` (or DM the bot `notify`) first.'
           ),
         ],
-        ephemeral: true,
+        ...EPHEMERAL,
       });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ...EPHEMERAL });
 
     await interaction.editReply({
       embeds: [
