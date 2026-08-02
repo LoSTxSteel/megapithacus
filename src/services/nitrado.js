@@ -214,6 +214,31 @@ async function setServerPassword(serviceId, token, password) {
   );
 }
 
+/**
+ * Set admin password via Nitrado settings (not join/server password).
+ * Resolves category/key from live settings when possible.
+ */
+async function setAdminPassword(serviceId, token, password) {
+  const gameserver = await getGameserver(serviceId, token);
+  const settings = gameserver.settings || {};
+  const match =
+    findSettingKey(settings, (_cat, key) => {
+      return (
+        /admin[-_]?password/i.test(key) ||
+        /^serveradminpassword$/i.test(key) ||
+        /^AdminPassword$/i.test(key)
+      );
+    }) || { category: 'general', key: 'admin-password' };
+
+  return updateGameserverSetting(
+    serviceId,
+    token,
+    match.category,
+    match.key,
+    password == null ? '' : String(password)
+  );
+}
+
 function extractMapName(gameserver, fallback) {
   const settings = gameserver.settings || {};
   const configBlock = settings.config || {};
@@ -495,6 +520,7 @@ module.exports = {
   updateGameserverSetting,
   setServerName,
   setServerPassword,
+  setAdminPassword,
   queryService,
   queryCluster,
   describeService,

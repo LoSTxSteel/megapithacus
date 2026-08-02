@@ -16,6 +16,7 @@ const {
   restartGameserver,
   setServerName,
   setServerPassword,
+  setAdminPassword,
   queryCluster,
 } = require('../services/nitrado');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
@@ -185,7 +186,12 @@ function serverActionButtons(serviceId) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`${PREFIX}password:${id}`)
-        .setLabel('Set password')
+        .setLabel('Set join password')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId(`${PREFIX}adminpassword:${id}`)
+        .setLabel('Set admin password')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(disabled),
       new ButtonBuilder()
@@ -212,7 +218,7 @@ async function buildServerManagerMessage(
   const statusMap = await fetchServerStatuses(guild);
 
   const lines = [
-    'Manage synced **Nitrado** ASE servers — power, password, and display name.',
+    'Manage synced **Nitrado** ASE servers — power, join/admin password, and display name.',
     `Requires **Manage Server**, **${ADMIN_ROLE_NAME}**, or a **Server power** role.`,
     '',
     `Allowed roles: ${formatAreaRoles(guildId, 'serverPower')}`,
@@ -273,7 +279,7 @@ async function buildServerManagerMessage(
 function passwordModal(serviceId) {
   return new ModalBuilder()
     .setCustomId(`${PREFIX}modal:password:${serviceId}`)
-    .setTitle('Set server password')
+    .setTitle('Set join password')
     .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -283,6 +289,23 @@ function passwordModal(serviceId) {
           .setRequired(false)
           .setMaxLength(64)
           .setPlaceholder('Leave blank to remove password')
+      )
+    );
+}
+
+function adminPasswordModal(serviceId) {
+  return new ModalBuilder()
+    .setCustomId(`${PREFIX}modal:adminpassword:${serviceId}`)
+    .setTitle('Set admin password')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('adminpassword')
+          .setLabel('Admin password (empty = clear)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(64)
+          .setPlaceholder('Leave blank to remove admin password')
       )
     );
 }
@@ -457,6 +480,20 @@ async function handleServerManagerInteraction(interaction) {
     return true;
   }
 
+  if (interaction.isButton() && id.startsWith(`${PREFIX}adminpassword:`)) {
+    const serviceId = id.slice(`${PREFIX}adminpassword:`.length);
+    if (!serviceId || serviceId === 'none') return true;
+    if (!findServer(getGuild(guildId), serviceId)) {
+      await interaction.reply({
+        embeds: [errorEmbed('That server is no longer synced.')],
+        ephemeral: true,
+      });
+      return true;
+    }
+    await interaction.showModal(adminPasswordModal(serviceId));
+    return true;
+  }
+
   if (interaction.isButton() && id.startsWith(`${PREFIX}name:`)) {
     const serviceId = id.slice(`${PREFIX}name:`.length);
     if (!serviceId || serviceId === 'none') return true;
@@ -502,7 +539,44 @@ async function handleServerManagerInteraction(interaction) {
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
-          content: `Set password failed: ${error.message}`,
+          content: `Set join password failed: ${error.message}`,
+        })
+      );
+    }
+    return true;
+  }
+
+  if (interaction.isModalSubmit() && id.startsWith(`${PREFIX}modal:adminpassword:`)) {
+    const serviceId = id.slice(`${PREFIX}modal:adminpassword:`.length);
+    const guild = getGuild(guildId);
+    const server = findServer(guild, serviceId);
+    if (!server) {
+      await interaction.reply({
+        embeds: [errorEmbed('That server is no longer synced.')],
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    const password = interaction.fields.getTextInputValue('adminpassword') ?? '';
+    const token = tokenForServer(server, guild);
+    await interaction.deferUpdate();
+
+    try {
+      await setAdminPassword(serviceId, token, password);
+      await interaction.editReply(
+        await buildServerManagerMessage(guildId, {
+          selectedId: serviceId,
+          content: password
+            ? `Updated admin password on **${serverLabel(server)}**.`
+            : `Cleared admin password on **${serverLabel(server)}**.`,
+        })
+      );
+    } catch (error) {
+      await interaction.editReply(
+        await buildServerManagerMessage(guildId, {
+          selectedId: serviceId,
+          content: `Set admin password failed: ${error.message}`,
         })
       );
     }
