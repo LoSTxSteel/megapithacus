@@ -177,27 +177,77 @@ async function sendCommand(serviceId, token, command) {
 }
 
 /**
- * Kick via Nitrado Player Management (preferred for arkxb / online players).
- * Official shape: GET .../games/players/{playerId}?type=kick
- * Uses the `id` from GET .../games/players — not gamertag, not specimen implant.
+ * Kick via Nitrado Player Management (not console KickPlayer).
+ * Uses the online-list `id` from GET .../games/players — not Xbox XUID,
+ * not specimen implant. ASE / arkxb products disagree on HTTP shape, so we
+ * try the known variants in order until one succeeds.
+ *
+ * Order (observed across Nitrado clients / web UI):
+ * 1) POST .../games/players/kick  body player_id=  (Flutter / Java clients)
+ * 2) GET  .../games/players/{id}?type=kick
+ * 3) DELETE .../games/players/{id}?type=kick
+ * 4) DELETE .../games/players/{id}?reason=
+ * 5) POST .../games/players/{id}/kick
  */
-async function kickOnlinePlayer(serviceId, token, playerId) {
-  const id = encodeURIComponent(String(playerId).trim());
-  const qs = new URLSearchParams({ type: 'kick' }).toString();
-  try {
-    return await apiGet(
-      `/services/${serviceId}/gameservers/games/players/${id}?${qs}`,
-      token
-    );
-  } catch (error) {
-    // Some products accept POST /players/kick with player_id instead.
-    if (error instanceof NitradoError && (error.status === 404 || error.status === 405)) {
-      return apiPost(`/services/${serviceId}/gameservers/games/players/kick`, token, {
-        player_id: String(playerId).trim(),
-      });
-    }
-    throw error;
+async function kickOnlinePlayer(serviceId, token, playerId, reason = 'Kicked') {
+  const rawId = String(playerId || '').trim();
+  if (!rawId) {
+    throw new NitradoError('Missing Nitrado online player id for Player Management kick', 400);
   }
+  const id = encodeURIComponent(rawId);
+  const base = `/services/${serviceId}/gameservers/games/players`;
+  const attempts = [
+    {
+      label: `POST ${base}/kick player_id=`,
+      run: () => apiPost(`${base}/kick`, token, { player_id: rawId }),
+    },
+    {
+      label: `GET ${base}/{id}?type=kick`,
+      run: () =>
+        apiGet(`${base}/${id}?${new URLSearchParams({ type: 'kick' })}`, token),
+    },
+    {
+      label: `DELETE ${base}/{id}?type=kick`,
+      run: () =>
+        apiDelete(`${base}/${id}`, token, { type: 'kick' }),
+    },
+    {
+      label: `DELETE ${base}/{id}?reason=`,
+      run: () =>
+        apiDelete(`${base}/${id}`, token, {
+          reason: String(reason || 'Kicked').slice(0, 120),
+        }),
+    },
+    {
+      label: `POST ${base}/{id}/kick`,
+      run: () => apiPost(`${base}/${id}/kick`, token, { player_id: rawId }),
+    },
+  ];
+
+  const errors = [];
+  for (const attempt of attempts) {
+    try {
+      const data = await attempt.run();
+      console.log(
+        `[nitrado] Player Management kick ok service=${serviceId} ` +
+          `playerId=${rawId} via ${attempt.label}`
+      );
+      return { data, method: attempt.label, playerId: rawId };
+    } catch (error) {
+      const msg = error?.message || String(error);
+      errors.push(`${attempt.label}: ${msg}`);
+      console.warn(
+        `[nitrado] Player Management kick attempt failed service=${serviceId} ` +
+          `playerId=${rawId} via ${attempt.label}: ${msg}`
+      );
+    }
+  }
+
+  throw new NitradoError(
+    `Player Management kick failed for player ${rawId} on service ${serviceId}. ` +
+      errors.slice(0, 3).join(' | '),
+    500
+  );
 }
 
 /**

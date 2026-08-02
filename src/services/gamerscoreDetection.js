@@ -368,23 +368,48 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
 
   try {
     if (punishment === 'kick') {
-      // Kick with the live join payload (nitradoPlayerId + serviceId) — do not
-      // re-fetch via moderatePlayer first (that path can miss join-time ids and
-      // then no-op / fail after OpenXBL latency).
-      nitrado = await kickPlayerOnCluster(guild, kickTarget);
-      // Require a real successful Nitrado kick — empty/fake server lists are failures.
-      punishOk = Boolean(nitrado?.ok && nitrado.anyOk);
-      console.log(
-        `[gamerscore] kick result gt=${gamertag} ok=${Boolean(nitrado?.ok)} ` +
-          `anyOk=${Boolean(nitrado?.anyOk)} ` +
-          `nitradoPlayerId=${kickTarget.nitradoPlayerId || '(none)'} ` +
-          `summary=${nitrado?.summary || nitrado?.error || ''}`
-      );
+      // Player Management only on the join serviceId — never console KickPlayer
+      // (POST .../gameservers/command reliably 500s on ASE arkxb).
+      if (!kickTarget.nitradoPlayerId) {
+        punishOk = false;
+        actionLabel =
+          'Kick failed: missing nitradoPlayerId on join payload ' +
+          '(need online-list id from GET .../games/players)';
+        nitrado = {
+          ok: false,
+          anyOk: false,
+          error: actionLabel,
+        };
+        console.warn(
+          `[gamerscore] kick aborted gt=${gamertag} — no nitradoPlayerId ` +
+            `serviceId=${kickTarget.serviceId || '(none)'}`
+        );
+      } else {
+        nitrado = await kickPlayerOnCluster(guild, kickTarget, {
+          playerManagementOnly: true,
+          allowClusterFallback: false,
+          allowConsoleFallback: false,
+          reason,
+        });
+        punishOk = Boolean(nitrado?.ok && nitrado.anyOk);
+        console.log(
+          `[gamerscore] kick result gt=${gamertag} ok=${Boolean(nitrado?.ok)} ` +
+            `anyOk=${Boolean(nitrado?.anyOk)} ` +
+            `nitradoPlayerId=${kickTarget.nitradoPlayerId || '(none)'} ` +
+            `serviceId=${kickTarget.serviceId || '(none)'} ` +
+            `summary=${nitrado?.summary || nitrado?.error || ''}`
+        );
 
-      if (!punishOk) {
-        actionLabel = `Kick failed: ${nitrado?.error || nitrado?.summary || 'unknown'}`;
-      } else if (nitrado.summary) {
-        actionLabel = `Kick — ${nitrado.summary}`;
+        if (!punishOk) {
+          const detail =
+            nitrado?.error ||
+            nitrado?.results?.find((r) => r.error)?.error ||
+            nitrado?.summary ||
+            'unknown';
+          actionLabel = `Kick failed (Player Management): ${detail}`;
+        } else if (nitrado.summary) {
+          actionLabel = `Kick — ${nitrado.summary}`;
+        }
       }
 
       if (punishOk) {
@@ -470,10 +495,6 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
     );
   }
 
-  if (!punishOk && punishment === 'kick' && !kickTarget.nitradoPlayerId) {
-    actionLabel = `${actionLabel} (missing nitradoPlayerId on join payload)`;
-  }
-
   await postDetectionLog(discordGuild, guildId, {
     outcome: 'punish',
     playerName,
@@ -483,7 +504,18 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
     mapServer,
     note: punishOk
       ? null
-      : `Punishment did not complete. ${actionLabel}`,
+      : [
+          'Punishment did not complete.',
+          actionLabel,
+          kickTarget.nitradoPlayerId
+            ? `nitradoPlayerId=\`${kickTarget.nitradoPlayerId}\``
+            : 'nitradoPlayerId=_missing_',
+          kickTarget.serviceId
+            ? `serviceId=\`${kickTarget.serviceId}\``
+            : 'serviceId=_missing_',
+        ]
+          .filter(Boolean)
+          .join('\n'),
   }).catch((err) => console.warn('[gamerscore] log failed:', err.message));
 
   return {

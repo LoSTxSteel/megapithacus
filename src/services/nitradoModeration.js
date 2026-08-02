@@ -295,35 +295,52 @@ async function unbanPlayerOnCluster(guild, profile) {
 }
 
 /**
- * Kick a player on one service:
- * 1) Nitrado Player Management kick (online `id`) — most reliable for arkxb
- * 2) Console KickPlayer variants (numeric id, then quoted gamertag)
- *
- * Requires the gameserver process to be online; Nitrado returns 500
- * "could not be sent to the application server" when it is offline.
+ * Kick a player on one service via Player Management (online `id`).
+ * Console KickPlayer (`POST .../gameservers/command`) is optional and usually
+ * 500s on ASE arkxb — keep it off for gamerscore / automated kicks.
  */
-async function kickOnService(server, token, profile) {
+async function kickOnService(server, token, profile, options = {}) {
+  const allowConsoleFallback = options.allowConsoleFallback === true;
+  const reason = options.reason || 'Kicked';
   const nitradoId = await resolveNitradoPlayerId(server.serviceId, token, profile);
-  if (nitradoId) {
-    try {
-      await kickOnlinePlayer(server.serviceId, token, nitradoId);
-      console.log(
-        `[nitrado] Player Management kick ok service=${server.serviceId} playerId=${nitradoId}`
+
+  if (!nitradoId) {
+    const msg =
+      `No Nitrado online player id for gt=${profile?.gamertag || '?'} ` +
+      `service=${server.serviceId}`;
+    console.warn(`[nitrado] kick: ${msg}`);
+    if (!allowConsoleFallback) {
+      throw new Error(
+        `${msg}. Player Management kick requires the online-list id from join.`
       );
-      return;
+    }
+  } else {
+    try {
+      await kickOnlinePlayer(server.serviceId, token, nitradoId, reason);
+      return { method: 'player-management', playerId: nitradoId };
     } catch (error) {
       console.warn(
         `[nitrado] Player Management kick failed service=${server.serviceId} ` +
           `playerId=${nitradoId}: ${error.message || error}`
       );
-      // Fall through to console commands
+      if (!allowConsoleFallback) {
+        throw error;
+      }
+      // Fall through to console only when explicitly allowed
     }
-  } else {
-    console.warn(
-      `[nitrado] kick: no nitradoPlayerId for gt=${profile?.gamertag || '?'} ` +
-        `service=${server.serviceId} — trying console KickPlayer`
+  }
+
+  if (!allowConsoleFallback) {
+    throw new Error(
+      `Player Management kick failed on service ${server.serviceId} ` +
+        `(console KickPlayer disabled — ASE usually returns 500 on /gameservers/command).`
     );
   }
+
+  console.warn(
+    `[nitrado] kick: falling back to console KickPlayer service=${server.serviceId} ` +
+      `(often 500s on ASE)`
+  );
 
   const online =
     (nitradoId
@@ -340,13 +357,29 @@ async function kickOnService(server, token, profile) {
     throw new Error('No kick target (need online Nitrado player id, platform id, or gamertag).');
   }
   await sendFirstWorkingCommand(server.serviceId, token, commands);
+  return { method: 'console', playerId: nitradoId || null };
 }
 
 /**
- * Kick via Player Management + console. Prefers the player's current/last map,
- * otherwise tries the whole cluster.
+ * Kick via Player Management (preferred). Options:
+ * - playerManagementOnly: never use console KickPlayer (default false)
+ * - allowClusterFallback: if preferred serviceId fails, try other maps (default true)
+ * - reason: passed to PM delete variants
+ *
+ * Prefers the player's current/last map serviceId when present.
  */
-async function kickPlayerOnCluster(guild, profile) {
+async function kickPlayerOnCluster(guild, profile, options = {}) {
+  const playerManagementOnly = options.playerManagementOnly === true;
+  // Gamerscore / automated: stay on join service + PM only.
+  // Manual /player kicks: may try other maps + console as last resort.
+  const allowClusterFallback = playerManagementOnly
+    ? options.allowClusterFallback === true
+    : options.allowClusterFallback !== false;
+  const allowConsoleFallback = playerManagementOnly
+    ? false
+    : options.allowConsoleFallback !== false;
+  const reason = options.reason || 'Kicked';
+
   const identifier = playerIdentifier(profile);
   const hasKickTarget =
     identifier ||
@@ -366,30 +399,44 @@ async function kickPlayerOnCluster(guild, profile) {
       ? String(profile.serviceId)
       : null;
 
+  const kickOpts = {
+    allowConsoleFallback,
+    reason,
+  };
+
   let results = await forEachServer(
     guild,
     async (server, token) => {
-      await kickOnService(server, token, profile);
+      await kickOnService(server, token, profile, kickOpts);
     },
     preferred ? { onlyServiceId: preferred } : {}
   );
 
   let summary = summarizeResults(results, 'kick');
 
-  // If preferred map failed / empty, fall back to whole cluster
-  if (preferred && (summary.allFailed || summary.noRealServers)) {
+  // If preferred map failed / empty, optionally fall back to whole cluster
+  if (
+    preferred &&
+    allowClusterFallback &&
+    (summary.allFailed || summary.noRealServers)
+  ) {
     results = await forEachServer(guild, async (server, token) => {
-      await kickOnService(server, token, profile);
+      await kickOnService(server, token, profile, kickOpts);
     });
     summary = summarizeResults(results, 'kick');
   }
 
   if (summary.allFailed) {
+    const firstError = summary.results?.find((r) => !r.ok && r.error)?.error;
     return {
       ok: false,
       error:
-        `Nitrado kick failed on all servers.\n${summary.summary}` +
-        '\n_Note: the gameserver must be online for kicks to reach the application._',
+        (firstError
+          ? `Nitrado kick failed: ${firstError}`
+          : `Nitrado kick failed on all servers.\n${summary.summary}`) +
+        (playerManagementOnly
+          ? '\n_Player Management only — console KickPlayer was not used (ASE /gameservers/command often 500s)._'
+          : '\n_Note: the gameserver must be online for kicks to reach the application._'),
       identifier,
       ...summary,
     };
