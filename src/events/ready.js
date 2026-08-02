@@ -8,6 +8,15 @@ const { startStatusRotation } = require('../services/statusRotation');
 const { startDeployNotify } = require('../services/deployNotify');
 const { deploySlashCommands } = require('../services/deploySlashCommands');
 
+function startScheduler(name, fn) {
+  try {
+    fn();
+  } catch (error) {
+    console.error(`[scheduler] ${name} failed to start: ${error.message}`);
+    if (error.stack) console.error(error.stack);
+  }
+}
+
 module.exports = {
   name: Events.ClientReady,
   once: true,
@@ -17,6 +26,15 @@ module.exports = {
       `Ready: ${client.commands.size} command(s) in memory:`,
       [...client.commands.keys()].sort().join(', ')
     );
+
+    // Start refresh loops immediately — never block them on slash deploy (which can hang).
+    startScheduler('statusRotation', () => startStatusRotation(client));
+    startScheduler('popManager', () => startPopManager(client));
+    startScheduler('logBoards', () => startLogBoards(client));
+    startScheduler('playerTracker', () => startPlayerTracker(client));
+    startScheduler('banReminders', () => startBanReminders(client));
+    startScheduler('deployNotify', () => startDeployNotify(client));
+
     try {
       const result = await deploySlashCommands(client);
       if (result?.refused) {
@@ -38,11 +56,5 @@ module.exports = {
       }
       if (error.stack) console.error(error.stack);
     }
-    startStatusRotation(client);
-    startPopManager(client);
-    startLogBoards(client);
-    startPlayerTracker(client);
-    startBanReminders(client);
-    startDeployNotify(client);
   },
 };

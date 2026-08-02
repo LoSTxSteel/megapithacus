@@ -109,21 +109,30 @@ function extractXuid(data) {
   return null;
 }
 
+const OPENXBL_TIMEOUT_MS = 8_000;
+
 async function fetchOpenXbl(url, key) {
-  const res = await fetch(url, {
-    headers: {
-      'X-Authorization': key,
-      Accept: 'application/json',
-    },
-  });
-  const text = await res.text();
-  let json = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENXBL_TIMEOUT_MS);
   try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
+    const res = await fetch(url, {
+      headers: {
+        'X-Authorization': key,
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    return { res, json };
+  } finally {
+    clearTimeout(timer);
   }
-  return { res, json };
 }
 
 function lookupUrls(gamertag) {

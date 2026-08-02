@@ -29,6 +29,8 @@ function parseJsonPreserveLargeInts(text) {
   return JSON.parse(safe);
 }
 
+const NITRADO_TIMEOUT_MS = 25_000;
+
 async function apiRequest(method, path, token, formFields = null) {
   if (!token) {
     throw new NitradoError(
@@ -50,7 +52,24 @@ async function apiRequest(method, path, token, formFields = null) {
     options.body = new URLSearchParams(formFields).toString();
   }
 
-  const res = await fetch(`${BASE}${path}`, options);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NITRADO_TIMEOUT_MS);
+  options.signal = controller.signal;
+
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, options);
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new NitradoError(
+        `Nitrado request timed out after ${NITRADO_TIMEOUT_MS}ms (${method} ${path})`,
+        408
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   let body;
   try {

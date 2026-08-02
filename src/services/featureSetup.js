@@ -635,9 +635,9 @@ function isFeatureConfigured(guild, key) {
   const setup = guild.featureSetup?.[key];
   if (!setup) return false;
   if (TEXT_LIVE_FEATURES.has(key)) {
-    // channelId preferred; legacy forum-thread installs used threadId
+    // Channel (or legacy forum thread) is enough — messageId is created on first refresh.
     const destId = setup.channelId || setup.threadId;
-    return Boolean(destId && setup.messageId);
+    return Boolean(destId);
   }
   if (TEXT_LOG_FEATURES.has(key)) {
     return Boolean(setup.ready && setup.channelId);

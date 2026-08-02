@@ -7,6 +7,16 @@ const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
 
+/** Warn once per guild/reason (avoid 5m spam). */
+const skipWarned = new Set();
+
+function warnSkipOnce(guildId, reason) {
+  const key = `${guildId}:${reason}`;
+  if (skipWarned.has(key)) return;
+  skipWarned.add(key);
+  console.warn(`[popManager] skip guild=${guildId}: ${reason}`);
+}
+
 function sanitizeInline(value) {
   return String(value ?? '').replace(/`/g, "'");
 }
@@ -76,17 +86,36 @@ function buildPopEmbed(guildConfig, cluster) {
 async function refreshGuildPop(client, guildId) {
   const guildConfig = getGuild(guildId);
   if (!isFeatureEnabled(guildConfig, 'popManager')) return;
-  if (!isFeatureConfigured(guildConfig, 'popManager')) return;
+  if (!isFeatureConfigured(guildConfig, 'popManager')) {
+    warnSkipOnce(
+      guildId,
+      'enabled but not configured (missing #server-status channel — run Feature Setup)'
+    );
+    return;
+  }
 
   const setup = guildConfig.featureSetup.popManager || {};
   // Prefer text channel; legacy installs used a forum thread id
   const channelId = setup.channelId || setup.threadId;
   const { messageId } = setup;
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!discordGuild || !channelId) return;
+  if (!discordGuild) {
+    warnSkipOnce(guildId, 'Discord guild not reachable from this bot');
+    return;
+  }
+  if (!channelId) {
+    warnSkipOnce(guildId, 'no channelId/threadId stored');
+    return;
+  }
 
   const channel = await discordGuild.channels.fetch(channelId).catch(() => null);
-  if (!channel?.isTextBased?.()) return;
+  if (!channel?.isTextBased?.()) {
+    warnSkipOnce(
+      guildId,
+      `channel missing or not text-based id=${channelId} — re-run Server Status Setup`
+    );
+    return;
+  }
 
   if (channel.name === 'pop-manager' && channel.setName) {
     await channel.setName('server-status').catch(() => null);
@@ -128,7 +157,7 @@ async function refreshGuildPop(client, guildId) {
       });
     }
   } catch (error) {
-    console.warn(`Server Status refresh failed for ${guildId}:`, error.message);
+    console.warn(`[popManager] refresh failed guild=${guildId}: ${error.message}`);
   }
 }
 
@@ -137,7 +166,7 @@ async function refreshAll(client) {
     try {
       await refreshGuildPop(client, guildId);
     } catch (error) {
-      console.warn(`Server Status error (${guildId}):`, error.message);
+      console.warn(`[popManager] error guild=${guildId}: ${error.message}`);
     }
   }
 }
@@ -147,15 +176,15 @@ function startPopManager(client) {
   // First refresh shortly after boot, then every 5 minutes.
   setTimeout(() => {
     refreshAll(client).catch((err) =>
-      console.warn('Server Status startup refresh:', err.message)
+      console.warn('[popManager] startup refresh:', err.message)
     );
   }, 15_000);
   timer = setInterval(() => {
     refreshAll(client).catch((err) =>
-      console.warn('Server Status interval:', err.message)
+      console.warn('[popManager] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('Server Status scheduler started (every 5 minutes)');
+  console.log('[scheduler] popManager started (5m)');
 }
 
 module.exports = {

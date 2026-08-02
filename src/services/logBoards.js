@@ -189,6 +189,13 @@ async function refreshChatBoard(client, guildId) {
 
   const guildFresh = await syncMapForums(discordGuild, guildId);
   if (!countMapLogThreads(guildFresh, 'chatLogs')) {
+    const key = `${guildId}:chatLogs:nothreads`;
+    if (!skipConfiguredWarned.has(key)) {
+      skipConfiguredWarned.add(key);
+      console.warn(
+        `[logBoards] chatLogs has no map threads guild=${guildId} — Sync servers / Feature Setup`
+      );
+    }
     return;
   }
 
@@ -196,6 +203,14 @@ async function refreshChatBoard(client, guildId) {
     (guildFresh.nitradoAccounts || []).length
       ? await collectPerMapLogs(guildFresh)
       : { byMap: {}, errors: ['Add Nitrado token first'] };
+
+  if (collected.errors?.length) {
+    console.warn(
+      `[logBoards] chatLogs pull errors guild=${guildId}: ${collected.errors
+        .slice(0, 5)
+        .join('; ')}`
+    );
+  }
 
   for (const server of guildFresh.servers || []) {
     const serviceId = String(server.serviceId);
@@ -221,8 +236,13 @@ async function refreshChatBoard(client, guildId) {
 }
 
 async function refreshGuildLogBoards(client, guildId) {
-  await refreshAdminBoard(client, guildId);
-  await refreshChatBoard(client, guildId);
+  // Keep chat refresh alive even if admin board throws.
+  await refreshAdminBoard(client, guildId).catch((error) =>
+    console.warn(`[logBoards] adminLogging error guild=${guildId}: ${error.message}`)
+  );
+  await refreshChatBoard(client, guildId).catch((error) =>
+    console.warn(`[logBoards] chatLogs error guild=${guildId}: ${error.message}`)
+  );
 }
 
 async function refreshAllLogBoards(client) {
@@ -247,7 +267,7 @@ function startLogBoards(client) {
       console.warn('[logBoards] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('Log boards scheduler started (every 5 minutes · 3 forums · per-map threads)');
+  console.log('[scheduler] logBoards started (5m)');
 }
 
 module.exports = {
