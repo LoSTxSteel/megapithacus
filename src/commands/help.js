@@ -22,6 +22,7 @@ module.exports = {
           value: [
             '`/help` — this message',
             '`/credit` — view your seasonal & permanent credit',
+            '`/pay` — admin pay balance, log events/tickets, request payouts (configured roles)',
           ].join('\n'),
         },
         {
@@ -38,6 +39,7 @@ module.exports = {
             '`/rewardmanager` — boost rewards hub (enable, channel, amount, type)',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
             "`/creditview` — view another user's credit balance",
+            '`/adminpay` — configure admin pay rates & review payout requests',
             '`/servermanager` — Nitrado hub (start/stop/restart, password, name)',
             '`/rollback` — restore Nitrado backup or dated SavedArks `.ark`',
             '`/upload` — upload a custom `.ark` save (Discord size limits apply)',
@@ -50,7 +52,7 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — set which roles can use Donations / Rewards / Credits / Gamerscore / Server power (owner only)',
+            '`/permissions` — set which roles can use Donations / Rewards / Credits / Gamerscore / Server power / Admin Pay (owner only)',
         },
         {
           name: 'Feature setup',

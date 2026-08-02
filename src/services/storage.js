@@ -82,6 +82,57 @@ function defaultRewards() {
   };
 }
 
+function defaultAdminPay() {
+  return {
+    currencySymbol: '£',
+    ticketPayAmount: 0,
+    eventHostPayAmount: 0,
+    payRoleIds: [],
+    ledger: [],
+    payoutRequests: [],
+  };
+}
+
+function isLegacyAdminPay(raw) {
+  if (!raw || typeof raw !== 'object') return false;
+  if (Array.isArray(raw.staff)) return true;
+  if (raw.boardChannelId || raw.boardMessageId) return true;
+  if (raw.rates && typeof raw.rates === 'object' && !('ticketPayAmount' in raw)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeAdminPay(raw) {
+  const defaults = defaultAdminPay();
+  if (!raw || typeof raw !== 'object' || isLegacyAdminPay(raw)) {
+    const currency =
+      raw?.currencySymbol && String(raw.currencySymbol).trim()
+        ? String(raw.currencySymbol).trim().slice(0, 8)
+        : defaults.currencySymbol;
+    return { ...defaults, currencySymbol: currency };
+  }
+
+  const ticket = Number(raw.ticketPayAmount);
+  const eventHost = Number(raw.eventHostPayAmount);
+
+  return {
+    currencySymbol:
+      raw.currencySymbol && String(raw.currencySymbol).trim()
+        ? String(raw.currencySymbol).trim().slice(0, 8)
+        : defaults.currencySymbol,
+    ticketPayAmount:
+      Number.isFinite(ticket) && ticket >= 0 ? Math.round(ticket * 100) / 100 : 0,
+    eventHostPayAmount:
+      Number.isFinite(eventHost) && eventHost >= 0
+        ? Math.round(eventHost * 100) / 100
+        : 0,
+    payRoleIds: [...new Set((raw.payRoleIds || []).map(String))].slice(0, 15),
+    ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
+    payoutRequests: Array.isArray(raw.payoutRequests) ? raw.payoutRequests : [],
+  };
+}
+
 function defaultGuild() {
   return {
     clusterName: 'My ASE Cluster',
@@ -111,9 +162,11 @@ function defaultGuild() {
       rewardManager: [],
       creditManager: [],
       gamerscoreManager: [],
+      adminPay: [],
     },
     credits: defaultCredits(),
     rewards: defaultRewards(),
+    adminPay: defaultAdminPay(),
     donations: {
       currency: 'GBP',
       currencySymbol: '£',
@@ -207,6 +260,35 @@ function getGuild(guildId) {
   }
 
   const current = all[guildId];
+  let migrated = false;
+
+  // One-time migrate: clear legacy Admin Pay staff/board blobs to the new shape.
+  if (isLegacyAdminPay(current.adminPay)) {
+    current.adminPay = normalizeAdminPay(current.adminPay);
+    migrated = true;
+  }
+
+  // Drop removed payLogging feature leftovers if present.
+  if (
+    current.features &&
+    Object.prototype.hasOwnProperty.call(current.features, 'payLogging')
+  ) {
+    delete current.features.payLogging;
+    migrated = true;
+  }
+  if (
+    current.featureSetup &&
+    Object.prototype.hasOwnProperty.call(current.featureSetup, 'payLogging')
+  ) {
+    delete current.featureSetup.payLogging;
+    migrated = true;
+  }
+
+  if (migrated) {
+    all[guildId] = current;
+    writeAll(all);
+  }
+
   return {
     ...defaults,
     ...current,
@@ -222,6 +304,7 @@ function getGuild(guildId) {
       rewardManager: current.permissions?.rewardManager || [],
       creditManager: current.permissions?.creditManager || [],
       gamerscoreManager: current.permissions?.gamerscoreManager || [],
+      adminPay: current.permissions?.adminPay || [],
     },
     gamerscoreDetection: {
       ...defaults.gamerscoreDetection,
@@ -236,6 +319,7 @@ function getGuild(guildId) {
       ...defaults.rewards,
       ...(current.rewards || {}),
     },
+    adminPay: normalizeAdminPay(current.adminPay),
     donations: {
       ...defaults.donations,
       ...(current.donations || {}),
@@ -297,6 +381,18 @@ function updateGuild(guildId, patch) {
       ...(current.rewards || {}),
       ...patch.rewards,
     };
+  }
+  if (patch.adminPay) {
+    const base = isLegacyAdminPay(current.adminPay)
+      ? defaultAdminPay()
+      : normalizeAdminPay(current.adminPay);
+    next.adminPay = normalizeAdminPay({
+      ...base,
+      ...patch.adminPay,
+      payRoleIds: patch.adminPay.payRoleIds ?? base.payRoleIds,
+      ledger: patch.adminPay.ledger ?? base.ledger,
+      payoutRequests: patch.adminPay.payoutRequests ?? base.payoutRequests,
+    });
   }
   if (patch.gamerscoreDetection) {
     const prevChecked =
@@ -503,5 +599,7 @@ module.exports = {
   defaultPingRoles,
   defaultCredits,
   defaultRewards,
+  defaultAdminPay,
+  normalizeAdminPay,
   defaultGamerscoreDetection,
 };

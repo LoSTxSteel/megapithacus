@@ -82,6 +82,26 @@ function trySaveHubInteraction(interaction) {
   }
 }
 
+function tryAdminPayHubInteraction(interaction) {
+  try {
+    const { handleAdminPayInteraction } = require('../management/adminPayHub');
+    return handleAdminPayInteraction(interaction);
+  } catch (error) {
+    console.warn('Admin pay hub unavailable:', error.message);
+    return false;
+  }
+}
+
+function tryPayHubInteraction(interaction) {
+  try {
+    const { handlePayInteraction } = require('../management/payHub');
+    return handlePayInteraction(interaction);
+  } catch (error) {
+    console.warn('Pay hub unavailable:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
@@ -137,6 +157,14 @@ module.exports = {
       }
 
       if (await tryGamerscoreHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryAdminPayHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryPayHubInteraction(interaction)) {
         return;
       }
 

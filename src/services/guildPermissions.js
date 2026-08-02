@@ -33,6 +33,12 @@ const PERMISSION_AREAS = {
     description: 'Configure Xbox gamerscore join checks and punishments',
     commandHint: '`/gamerscoremanager`',
   },
+  adminPay: {
+    key: 'adminPay',
+    label: 'Admin Pay',
+    description: 'Configure admin pay rates and review payout requests',
+    commandHint: '`/adminpay`',
+  },
 };
 
 function defaultPermissions() {
@@ -42,6 +48,7 @@ function defaultPermissions() {
     rewardManager: [],
     creditManager: [],
     gamerscoreManager: [],
+    adminPay: [],
   };
 }
 
@@ -55,6 +62,7 @@ function getPermissions(guildId) {
     rewardManager: [...(guild.permissions?.rewardManager || [])],
     creditManager: [...(guild.permissions?.creditManager || [])],
     gamerscoreManager: [...(guild.permissions?.gamerscoreManager || [])],
+    adminPay: [...(guild.permissions?.adminPay || [])],
   };
 }
 
@@ -89,6 +97,28 @@ function isGuildOwner(interaction) {
   );
 }
 
+function memberHasAnyRole(interaction, roleIds) {
+  const roles = (roleIds || []).map(String).filter(Boolean);
+  if (!roles.length) return false;
+
+  const memberRoles = interaction.member?.roles;
+  if (!memberRoles) return false;
+
+  if (typeof memberRoles.cache?.has === 'function') {
+    return roles.some((id) => memberRoles.cache.has(id));
+  }
+  if (Array.isArray(memberRoles)) {
+    return roles.some((id) => memberRoles.includes(id));
+  }
+  return false;
+}
+
+function memberHasBotSetupRole(interaction) {
+  const roleId = getGuild(interaction.guildId)?.botSetupRoleId;
+  if (!roleId) return false;
+  return memberHasAnyRole(interaction, [roleId]);
+}
+
 /**
  * Manage Server / owner always allowed. Otherwise member must have one of the
  * configured roles for that area. If no roles are configured, only Manage Server.
@@ -99,18 +129,7 @@ function canAccessArea(interaction, areaKey) {
   const roles = getPermissions(interaction.guildId)[areaKey] || [];
   if (!roles.length) return false;
 
-  const memberRoles = interaction.member?.roles;
-  if (!memberRoles) return false;
-
-  // GuildMemberRoleManager (cache) or API interaction member
-  if (typeof memberRoles.cache?.has === 'function') {
-    return roles.some((id) => memberRoles.cache.has(id));
-  }
-  if (Array.isArray(memberRoles)) {
-    // API interaction: roles is string[]
-    return roles.some((id) => memberRoles.includes(id));
-  }
-  return false;
+  return memberHasAnyRole(interaction, roles);
 }
 
 function canManageDonations(interaction) {
@@ -133,6 +152,20 @@ function canManageGamerscore(interaction) {
   return canAccessArea(interaction, 'gamerscoreManager');
 }
 
+function canManageAdminPay(interaction) {
+  if (memberHasBotSetupRole(interaction)) return true;
+  return canAccessArea(interaction, 'adminPay');
+}
+
+function canUsePay(interaction) {
+  if (isGuildOwner(interaction) || memberHasManageGuild(interaction)) return true;
+  if (memberHasBotSetupRole(interaction)) return true;
+
+  const { getAdminPay } = require('./adminPay');
+  const payRoles = getAdminPay(interaction.guildId)?.payRoleIds || [];
+  return memberHasAnyRole(interaction, payRoles);
+}
+
 function formatAreaRoles(guildId, areaKey) {
   const roles = getPermissions(guildId)[areaKey] || [];
   if (!roles.length) {
@@ -148,6 +181,8 @@ module.exports = {
   setAreaRoles,
   clearAreaRoles,
   memberHasManageGuild,
+  memberHasBotSetupRole,
+  memberHasAnyRole,
   isGuildOwner,
   canAccessArea,
   canManageDonations,
@@ -155,5 +190,7 @@ module.exports = {
   canManageRewards,
   canManageCredits,
   canManageGamerscore,
+  canManageAdminPay,
+  canUsePay,
   formatAreaRoles,
 };

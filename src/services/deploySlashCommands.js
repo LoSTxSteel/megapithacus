@@ -10,6 +10,8 @@ const REQUIRED_COMMANDS = [
   'gamerscoremanager',
   'rollback',
   'upload',
+  'adminpay',
+  'pay',
 ];
 
 /**

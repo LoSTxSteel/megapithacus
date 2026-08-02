@@ -63,8 +63,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"root\":\"/\",\"files\":[\"${ARCHIVE}\"]}" || true
 
-          # Ensure credit/reward command files landed
-          for f in credit.js creditview.js creditmanager.js rewardmanager.js; do
+          # Ensure credit/reward/admin-pay command files landed
+          for f in credit.js creditview.js creditmanager.js rewardmanager.js adminpay.js pay.js; do
             CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
               "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/contents?file=%2Fsrc%2Fcommands%2F${f}" \
               "${AUTH[@]}" || true)
