@@ -45,7 +45,7 @@ module.exports = {
             '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
-            '`/player search` — find players (ban/unban/kick on profile)',
+            '`/playersearch` / `/player search` — live online check + player profile (ban/unban/kick)',
           ].join('\n'),
         },
         {

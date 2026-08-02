@@ -44,6 +44,7 @@ function emptyProfile(guildId) {
     tribeName: null,
     tribeId: null,
     map: null,
+    serverName: null,
     serviceId: null,
     platform: 'Microsoft Store',
     firstSeen: null,
@@ -156,6 +157,7 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
   if (incoming.tribeName) profile.tribeName = incoming.tribeName;
   if (incoming.tribeId != null) profile.tribeId = String(incoming.tribeId);
   if (incoming.map) profile.map = incoming.map;
+  if (incoming.serverName) profile.serverName = String(incoming.serverName);
   if (incoming.serviceId) profile.serviceId = String(incoming.serviceId);
   if (incoming.platform) profile.platform = incoming.platform;
   if (incoming.notes) profile.notes = incoming.notes;

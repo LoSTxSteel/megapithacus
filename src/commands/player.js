@@ -5,7 +5,8 @@ const {
   ActionRowBuilder,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { searchPlayers, getPlayerById } = require('../services/playerDb');
+const { getPlayerById } = require('../services/playerDb');
+const { searchPlayersLive } = require('../services/playerLiveSearch');
 const {
   listBansForPlayer,
   findActiveBanForPlayer,
@@ -87,6 +88,22 @@ function punishmentSummary(guildId, profile) {
   return `${total} past punishment${total === 1 ? '' : 's'}`;
 }
 
+function onlineStatusValue(profile) {
+  if (profile.online) {
+    const where = [profile.map, profile.serverName].filter(Boolean).join(' · ');
+    return where ? `🟢 Online · ${where}` : '🟢 Online';
+  }
+  const last =
+    profile.lastSeen || profile.lastLeave || profile.lastJoin || null;
+  if (last) {
+    const t = Math.floor(new Date(last).getTime() / 1000);
+    if (Number.isFinite(t)) {
+      return `⚫ Offline · last seen <t:${t}:R>`;
+    }
+  }
+  return '⚫ Offline';
+}
+
 function profileEmbed(profile, guildId) {
   const guild = guildId ? getGuild(guildId) : null;
   const embed = brandEmbed(
@@ -95,7 +112,7 @@ function profileEmbed(profile, guildId) {
       .setDescription(
         profile.notes === 'FAKE_TEST_PROFILE'
           ? '_Fake test profile for Megapithacus development._'
-          : 'Player profile from join logging.'
+          : 'Player profile — live Nitrado status + join logging.'
       )
       .addFields(
         { name: 'Xbox Gamertag', value: profile.gamertag || '—', inline: true },
@@ -108,7 +125,7 @@ function profileEmbed(profile, guildId) {
         { name: 'Tribe', value: profile.tribeName || '—', inline: true },
         { name: 'Tribe ID', value: profile.tribeId ? `\`${profile.tribeId}\`` : '—', inline: true },
         { name: 'Map', value: profile.map || '—', inline: true },
-        { name: 'Online', value: profile.online ? 'Yes' : 'No', inline: true },
+        { name: 'Status', value: onlineStatusValue(profile), inline: true },
         {
           name: 'First seen',
           value: profile.firstSeen
@@ -127,6 +144,14 @@ function profileEmbed(profile, guildId) {
     guild,
     { context: 'Player DB' }
   );
+
+  if (profile.nitradoPlayerId) {
+    embed.addFields({
+      name: 'Nitrado player id',
+      value: `\`${profile.nitradoPlayerId}\``,
+      inline: true,
+    });
+  }
 
   if (guildId) {
     const history = punishmentHistoryLines(guildId, profile);
@@ -181,12 +206,99 @@ function resultsPicker(results) {
       .setPlaceholder('Select a player to view')
       .addOptions(
         results.slice(0, 25).map((p) => ({
-          label: (p.characterName || p.gamertag || 'Unknown').slice(0, 100),
-          description: `${p.gamertag || '—'} · ${p.map || 'No map'}`.slice(0, 100),
+          label: `${p.online ? '🟢' : '⚫'} ${(p.characterName || p.gamertag || 'Unknown').slice(0, 90)}`.slice(
+            0,
+            100
+          ),
+          description: `${p.gamertag || '—'} · ${
+            p.online ? p.map || 'Online' : 'Offline'
+          }`.slice(0, 100),
           value: p.id,
         }))
       )
   );
+}
+
+function statusBit(profile) {
+  if (profile.online) {
+    return ` · 🟢 ${profile.map || 'Online'}`;
+  }
+  return ' · ⚫ Offline';
+}
+
+/**
+ * Shared handler for `/player search` and `/playersearch`.
+ * Queries live Nitrado player lists, then shows DB results with fresh status.
+ */
+async function executeSearch(interaction) {
+  const query = interaction.options.getString('query', true);
+  const guildId = interaction.guildId;
+  const guild = getGuild(guildId);
+
+  await interaction.deferReply({ ephemeral: true });
+
+  let results;
+  let liveCount = 0;
+  try {
+    const live = await searchPlayersLive(guildId, guild, query);
+    results = live.results;
+    liveCount = live.liveCount;
+  } catch (error) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          `Live Nitrado lookup failed: ${error.message || error}\n` +
+            'Falling back was skipped — fix Nitrado tokens/servers in `/management`.'
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (!results.length) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          `No players matched \`${query}\`.\n` +
+            `_Live scan: ${liveCount} online across cluster._`
+        ),
+      ],
+    });
+    return;
+  }
+
+  if (results.length === 1) {
+    const payload = profilePayload(results[0], guildId);
+    await interaction.editReply({
+      embeds: payload.embeds,
+      components: payload.components,
+    });
+    return;
+  }
+
+  const list = results
+    .map((p, i) => {
+      const punish = punishmentSummary(guildId, p);
+      const punishBit = punish ? ` · ⚠ ${punish}` : '';
+      return `**${i + 1}.** ${p.characterName || 'Unknown'} · \`${
+        p.gamertag || '—'
+      }\` · implant \`${p.specimenImplant || '—'}\` · ${
+        p.tribeName || 'No tribe'
+      }${statusBit(p)}${punishBit}`;
+    })
+    .join('\n');
+
+  await interaction.editReply({
+    embeds: [
+      guildEmbed(getGuild(guildId), `Player search — ${results.length} result(s)`, {
+        accent: true,
+        context: 'Live + Player DB',
+      }).setDescription(
+        `${list.slice(0, 3800)}\n\n_Live scan: ${liveCount} online · select a player below._`
+      ),
+    ],
+    components: [resultsPicker(results)],
+  });
 }
 
 module.exports = {
@@ -197,11 +309,11 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName('search')
-        .setDescription('Search players by gamertag, IGN, implant, tribe, map, etc.')
+        .setDescription('Search players (live online check + latest stored data)')
         .addStringOption((opt) =>
           opt
             .setName('query')
-            .setDescription('Any piece of player info')
+            .setDescription('Gamertag, IGN, implant, tribe, map, etc.')
             .setRequired(true)
         )
     ),
@@ -209,52 +321,12 @@ module.exports = {
   profilePayload,
   profileEmbed,
   moderationMenu,
+  executeSearch,
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
-    const guildId = interaction.guildId;
-
     if (sub === 'search') {
-      const query = interaction.options.getString('query', true);
-      const results = searchPlayers(guildId, query).slice(0, 25);
-
-      if (!results.length) {
-        await interaction.reply({
-          embeds: [errorEmbed(`No players matched \`${query}\`.`)],
-          ephemeral: true,
-        });
-        return;
-      }
-
-      if (results.length === 1) {
-        await interaction.reply(profilePayload(results[0], guildId));
-        return;
-      }
-
-      const list = results
-        .map((p, i) => {
-          const punish = punishmentSummary(guildId, p);
-          const punishBit = punish ? ` · ⚠ ${punish}` : '';
-          return `**${i + 1}.** ${p.characterName || 'Unknown'} · \`${
-            p.gamertag || '—'
-          }\` · implant \`${p.specimenImplant || '—'}\` · ${
-            p.tribeName || 'No tribe'
-          } · ${p.map || '—'}${punishBit}`;
-        })
-        .join('\n');
-
-      await interaction.reply({
-        embeds: [
-          guildEmbed(getGuild(guildId), `Player search — ${results.length} result(s)`, {
-            accent: true,
-            context: 'Player DB',
-          }).setDescription(
-            `${list.slice(0, 3900)}\n\n_Select a player below to open their profile._`
-          ),
-        ],
-        components: [resultsPicker(results)],
-        ephemeral: true,
-      });
+      await executeSearch(interaction);
     }
   },
 };

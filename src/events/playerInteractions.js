@@ -6,8 +6,10 @@ const {
   PermissionFlagsBits,
 } = require('discord.js');
 const { getPlayerById } = require('../services/playerDb');
+const { refreshProfileLive } = require('../services/playerLiveSearch');
 const { moderatePlayer } = require('../services/playerModeration');
 const { profilePayload, moderationMenu, profileEmbed } = require('../commands/player');
+const { getGuild } = require('../services/storage');
 const {
   getDraft,
   setDraft,
@@ -82,10 +84,10 @@ async function handlePlayerInteraction(interaction) {
     return true;
   }
 
-  // Pick from search results
+  // Pick from search results — refresh live online status before showing profile
   if (interaction.isStringSelectMenu() && id === 'player:pick') {
     const profileId = interaction.values[0];
-    const profile = getPlayerById(interaction.guildId, profileId);
+    let profile = getPlayerById(interaction.guildId, profileId);
     if (!profile) {
       await interaction.update({
         embeds: [errorEmbed('That player profile no longer exists.')],
@@ -93,7 +95,22 @@ async function handlePlayerInteraction(interaction) {
       });
       return true;
     }
-    await interaction.update(profilePayload(profile, interaction.guildId));
+    await interaction.deferUpdate();
+    try {
+      profile =
+        (await refreshProfileLive(
+          interaction.guildId,
+          getGuild(interaction.guildId),
+          profile
+        )) || profile;
+    } catch (error) {
+      console.warn('Player pick live refresh failed:', error.message);
+    }
+    const payload = profilePayload(profile, interaction.guildId);
+    await interaction.editReply({
+      embeds: payload.embeds,
+      components: payload.components,
+    });
     return true;
   }
 

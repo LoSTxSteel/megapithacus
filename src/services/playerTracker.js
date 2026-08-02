@@ -69,7 +69,11 @@ async function scanGuild(client, guildId) {
       if (key) onlineKeys.add(key);
 
       const isJoin = !isBootstrap && key && !prev.has(key);
-      const profile = upsertPlayer(guildId, normalized, { joined: isJoin });
+      const profile = upsertPlayer(
+        guildId,
+        { ...normalized, serverName: server.name || mapName },
+        { joined: isJoin }
+      );
 
       if (isJoin && discordGuild) {
         if (wantsJoinLeave) {
