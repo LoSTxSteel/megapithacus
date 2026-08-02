@@ -21,12 +21,10 @@ function formatServerBlock(server) {
   const players = server.online ? Number(server.players) || 0 : 0;
   const count = formatCount(players, server.maxPlayers);
   const name = sanitizeInline(server.name || 'Server');
-  const map = sanitizeInline(server.map || 'Unknown');
 
   return [
     `${icon} \`${name} - ${count}\``,
     `Population: ${count}`,
-    `Map: ${map}`,
   ].join('\n');
 }
 
