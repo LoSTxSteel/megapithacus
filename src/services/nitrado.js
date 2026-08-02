@@ -420,6 +420,50 @@ function extractMapName(gameserver, fallback) {
   );
 }
 
+/**
+ * Live Nitrado / in-game display name from gameserver settings or query.
+ * Prefers settings hostname / server-name / session-name (same keys as setServerName).
+ */
+function extractServerName(gameserver) {
+  if (!gameserver || typeof gameserver !== 'object') return null;
+
+  const settings = gameserver.settings || {};
+  const general = settings.general || {};
+  const configBlock = settings.config || {};
+  const query = gameserver.query || {};
+
+  const fromSettings = findSettingKey(
+    settings,
+    (_cat, key) =>
+      /^server[-_]?name$/i.test(key) ||
+      /^hostname$/i.test(key) ||
+      /^session[-_]?name$/i.test(key)
+  );
+
+  const candidates = [
+    fromSettings ? settings[fromSettings.category]?.[fromSettings.key] : null,
+    general['server-name'],
+    general.hostname,
+    general['session-name'],
+    general.servername,
+    configBlock['server-name'],
+    configBlock.hostname,
+    configBlock['session-name'],
+    query.name,
+    query.hostname,
+    query.server_name,
+    query.servername,
+    gameserver.hostname,
+  ];
+
+  for (const value of candidates) {
+    if (value == null) continue;
+    const trimmed = String(value).trim();
+    if (trimmed) return trimmed.slice(0, 100);
+  }
+  return null;
+}
+
 function isOnline(status) {
   if (!status) return false;
   const s = String(status).toLowerCase();
@@ -458,11 +502,13 @@ async function queryService(server, token) {
       playerCount = Number(gameserver.query.players);
     }
 
+    const liveName = extractServerName(gameserver);
     return {
       ok: true,
       id: server.id,
       serviceId: server.serviceId,
-      name: server.name,
+      liveName: liveName || null,
+      name: liveName || server.name,
       map: extractMapName(gameserver, server.map || server.name),
       players: online ? playerCount : 0,
       maxPlayers,
@@ -478,6 +524,7 @@ async function queryService(server, token) {
       ok: false,
       id: server.id,
       serviceId: server.serviceId,
+      liveName: null,
       name: server.name,
       map: server.map || server.name,
       players: 0,
@@ -690,6 +737,7 @@ module.exports = {
   queryCluster,
   describeService,
   extractMapName,
+  extractServerName,
   testToken,
   listAllServicesForGuild,
   tokenForServer,

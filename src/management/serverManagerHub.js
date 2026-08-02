@@ -18,6 +18,7 @@ const {
   setServerPassword,
   setAdminPassword,
   queryCluster,
+  queryService,
 } = require('../services/nitrado');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
 const { ADMIN_ROLE_NAME } = require('../services/botSetup');
@@ -48,8 +49,38 @@ function findServer(guild, serviceId) {
   return listServers(guild).find((s) => String(s.serviceId) === String(serviceId));
 }
 
-function serverLabel(server) {
-  return String(server?.name || server?.map || server?.serviceId || 'Server').slice(0, 100);
+/** True for Nitrado type labels that are not real hostnames (e.g. "Gameserver"). */
+function isGenericServerLabel(name) {
+  const s = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ');
+  return !s || s === 'game server' || s === 'gameserver' || s === 'gameservers' || s === 'server';
+}
+
+/**
+ * Display name: live Nitrado hostname/server-name → stored guild label → map → service id.
+ * Pass queryCluster/queryService result when available so names stay current.
+ */
+function serverLabel(server, statusResult = null) {
+  const candidates = [
+    statusResult?.liveName,
+    statusResult?.ok !== false ? statusResult?.name : null,
+    server?.name,
+    server?.label,
+    statusResult?.map,
+    server?.map,
+  ];
+
+  for (const value of candidates) {
+    if (value == null) continue;
+    const trimmed = String(value).trim();
+    if (!trimmed || isGenericServerLabel(trimmed)) continue;
+    return trimmed.slice(0, 100);
+  }
+
+  const fallback = server?.serviceId || statusResult?.serviceId || 'Server';
+  return String(fallback).slice(0, 100);
 }
 
 /** @returns {'🟢'|'🔴'|'⚪'} */
@@ -82,8 +113,9 @@ function serversField(servers, statusMap) {
   return servers
     .slice(0, 20)
     .map((s) => {
-      const icon = statusIcon(statusMap.get(String(s.serviceId)));
-      return `${icon} **${serverLabel(s)}** (\`${s.serviceId}\`)`;
+      const result = statusMap.get(String(s.serviceId));
+      const icon = statusIcon(result);
+      return `${icon} **${serverLabel(s, result)}** (\`${s.serviceId}\`)`;
     })
     .join('\n')
     .slice(0, 1024);
@@ -102,8 +134,9 @@ function renameLocalServer(guildId, serviceId, name) {
 function serverSelect(guild, selectedId = null, statusMap = new Map()) {
   const servers = listServers(guild);
   const options = servers.slice(0, 25).map((s) => {
-    const icon = statusIcon(statusMap.get(String(s.serviceId)));
-    const base = serverLabel(s);
+    const result = statusMap.get(String(s.serviceId));
+    const icon = statusIcon(result);
+    const base = serverLabel(s, result);
     return {
       label: `${icon} ${base}`.slice(0, 100),
       description: `Nitrado \`${s.serviceId}\``.slice(0, 100),
@@ -237,7 +270,7 @@ async function buildServerManagerMessage(
     ? statusMap.get(String(selected.serviceId))
     : null;
   const selectedValue = selected
-    ? `${statusIcon(selectedResult)} **${serverLabel(selected)}** (\`${selected.serviceId}\`) — ${statusLabel(selectedResult)}`
+    ? `${statusIcon(selectedResult)} **${serverLabel(selected, selectedResult)}** (\`${selected.serviceId}\`) — ${statusLabel(selectedResult)}`
     : servers.length
       ? '_Pick a server below for controls_'
       : '_No synced servers_';
@@ -505,7 +538,18 @@ async function handleServerManagerInteraction(interaction) {
       });
       return true;
     }
-    await interaction.showModal(nameModal(serviceId, server.name || server.map || ''));
+    let currentName = serverLabel(server);
+    try {
+      const token = tokenForServer(server, getGuild(guildId));
+      if (token) {
+        const live = await queryService(server, token);
+        if (live?.liveName) currentName = live.liveName;
+        else if (live?.ok) currentName = serverLabel(server, live);
+      }
+    } catch {
+      // Prefill from stored label if live query fails
+    }
+    await interaction.showModal(nameModal(serviceId, currentName));
     return true;
   }
 
