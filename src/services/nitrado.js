@@ -1200,6 +1200,25 @@ function getCachedGameserver(serviceId) {
   return null;
 }
 
+/**
+ * Peek cached queryService/pop status without network.
+ * @param {string} serviceId
+ * @param {{ maxStaleMs?: number }} [opts] allow expired entries within this window
+ * @returns {object|null}
+ */
+function getCachedStatusResult(serviceId, { maxStaleMs = 0 } = {}) {
+  const hit = statusResultCache.get(String(serviceId));
+  if (!hit?.result) return null;
+  const now = Date.now();
+  if (hit.expiresAt > now) {
+    return { ...hit.result, cached: true };
+  }
+  if (maxStaleMs > 0 && now - hit.expiresAt <= maxStaleMs) {
+    return { ...hit.result, cached: true, stale: true };
+  }
+  return null;
+}
+
 async function getGameserverCached(serviceId, token) {
   const cached = getCachedGameserver(serviceId);
   if (cached) return cached;
@@ -2273,6 +2292,7 @@ module.exports = {
   setAdminPassword,
   queryService,
   queryCluster,
+  getCachedStatusResult,
   describeService,
   extractMapName,
   extractServerName,

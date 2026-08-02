@@ -1,5 +1,12 @@
 const { EmbedBuilder } = require('discord.js');
-const { fetchGameLogText, tokenForServer, extractMapName } = require('./nitrado');
+const {
+  fetchGameLogText,
+  tokenForServer,
+  extractMapName,
+  queryService,
+  getCachedStatusResult,
+  isGlobalRateLimited,
+} = require('./nitrado');
 const { enrichPlayersFromChatLogs } = require('./playerDb');
 const { brandEmbed } = require('../utils/embeds');
 const { brand } = require('../config');
@@ -239,13 +246,76 @@ function parseLogText(text, mapName, serviceId) {
 const SERVICE_STAGGER_MS = 500;
 /** Share one pull between admin + chat boards in the same refresh cycle. */
 const COLLECT_CACHE_TTL_MS = 2 * 60 * 1000;
+/** During 429 cooldown, reuse pop cache a bit longer for empty-server skip. */
+const EMPTY_SKIP_STALE_MS = 30 * 60 * 1000;
 /** @type {Map<string, { at: number, result?: any, promise?: Promise<any> }>} */
 const collectCache = new Map();
 /** Last successful parse per service — keep boards alive across 429 cooldowns. */
 const lastGoodByService = new Map();
+/** Log empty-server skip once until players return. */
+const emptySkipLogged = new Set();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Known online count for skipping file_server log pulls.
+ * Prefers queryService/pop cache; light status query on cold cache.
+ * Returns null when unknown (do not skip).
+ * @returns {Promise<number|null>}
+ */
+async function resolveOnlineCountForLogSkip(server, token) {
+  const sid = String(server.serviceId);
+  const fresh = getCachedStatusResult(sid);
+  if (fresh && !fresh.playersUnknown && Number.isFinite(Number(fresh.players))) {
+    return fresh.online ? Number(fresh.players) : 0;
+  }
+
+  if (token && isGlobalRateLimited(token)) {
+    const stale = getCachedStatusResult(sid, { maxStaleMs: EMPTY_SKIP_STALE_MS });
+    if (stale && !stale.playersUnknown && Number.isFinite(Number(stale.players))) {
+      return stale.online ? Number(stale.players) : 0;
+    }
+    return null;
+  }
+
+  if (!token) return null;
+
+  try {
+    const status = await queryService(server, token);
+    if (status.playersUnknown || status.players == null) return null;
+    if (!status.online) return 0;
+    const n = Number(status.players);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyEmptyServerSkip(byMap, server, serviceId) {
+  if (!emptySkipLogged.has(serviceId)) {
+    emptySkipLogged.add(serviceId);
+    console.log(`[logBoards] skip logs serviceId=${serviceId} (0 online)`);
+  }
+
+  const prev = lastGoodByService.get(serviceId);
+  if (prev) {
+    byMap[serviceId] = {
+      ...prev,
+      skippedEmpty: true,
+      stale: true,
+    };
+    return;
+  }
+
+  byMap[serviceId] = {
+    name: server.name,
+    chat: [],
+    admin: [],
+    skippedEmpty: true,
+    error: 'No players online — log pull skipped',
+  };
 }
 
 async function collectPerMapLogsUncached(guild, guildId = null) {
@@ -268,6 +338,15 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
       };
       errors.push(`${server.name}: no token`);
       continue;
+    }
+
+    const onlineCount = await resolveOnlineCountForLogSkip(server, token);
+    if (onlineCount === 0) {
+      applyEmptyServerSkip(byMap, server, serviceId);
+      continue;
+    }
+    if (onlineCount != null && onlineCount > 0) {
+      emptySkipLogged.delete(serviceId);
     }
 
     try {
