@@ -52,15 +52,6 @@ const FEATURE_META = {
       'Ban logs from Megapithacus — who banned, who was banned, duration, servers, reason.',
     refreshMinutes: null,
   },
-  payLogging: {
-    key: 'payLogging',
-    label: 'Admin Pay',
-    short: 'Approvals and logs for completed events, pay requests, and payouts',
-    forumName: 'admin-pay',
-    forumTopic:
-      'Admin Pay — approve completed events and pay requests. Also records bonuses and payouts.',
-    refreshMinutes: null,
-  },
   donationLogging: {
     key: 'donationLogging',
     label: 'Donation Logs',

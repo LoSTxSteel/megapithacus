@@ -1,5 +1,4 @@
 const { Events } = require('discord.js');
-const { handleEventPhotoDm } = require('./payBoardInteractions');
 const { scheduleDmDelete, isDmPersistent } = require('../utils/dmCleanup');
 const {
   buildSubscribeEmbed,
@@ -88,8 +87,6 @@ module.exports = {
           return;
         }
       }
-
-      await handleEventPhotoDm(message);
     } catch (error) {
       console.error('messageCreate handler failed:', error);
     }

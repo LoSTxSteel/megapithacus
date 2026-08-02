@@ -119,7 +119,7 @@ function homePayload() {
       },
       {
         name: 'Feature Management',
-        value: 'Pop, Ban, Pay, Admin, Chat, Donation logging',
+        value: 'Pop, Ban, Admin, Chat, Donation logging',
         inline: true,
       }
     );
@@ -305,24 +305,6 @@ function featureSetupText(guild, key) {
       !configured
         ? '_Press **Setup** to create the Megapithacus category + ban-logging forum._'
         : '_Ready. Enable to start writing ban logs._',
-    ].join('\n');
-  }
-
-  if (key === 'payLogging') {
-    return [
-      `Configured: **${configured ? 'Yes' : 'No'}**`,
-      `Category: ${category}`,
-      `Forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
-      '',
-      'Used for:',
-      '• Approving completed events',
-      '• Approving pay requests',
-      '• Recording bonuses and payouts',
-      '',
-      'Created automatically by `/adminpay board`.',
-      !configured
-        ? '_Press **Setup**, or run `/adminpay board`._'
-        : '_Ready._',
     ].join('\n');
   }
 

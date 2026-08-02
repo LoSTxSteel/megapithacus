@@ -2,12 +2,6 @@ const { PermissionFlagsBits } = require('discord.js');
 const { getGuild, updateGuild } = require('./storage');
 
 const PERMISSION_AREAS = {
-  adminPay: {
-    key: 'adminPay',
-    label: 'Admin Pay',
-    description: 'Add/update paid admins, log work, credits, and payouts',
-    commandHint: '`/adminpay manage` or `/adminpay board`',
-  },
   donations: {
     key: 'donations',
     label: 'Donations',
@@ -20,13 +14,26 @@ const PERMISSION_AREAS = {
     description: 'Start, stop, and restart Nitrado ASE game servers',
     commandHint: '`/management` → Server Management → Server power',
   },
+  rewardManager: {
+    key: 'rewardManager',
+    label: 'Reward manager',
+    description: 'Enable boost rewards and set the boost thank-you channel',
+    commandHint: '`/rewardmanager`',
+  },
+  creditManager: {
+    key: 'creditManager',
+    label: 'Credit manager',
+    description: 'Add, remove, wipe, and view player credits',
+    commandHint: '`/creditmanager` or `/creditview`',
+  },
 };
 
 function defaultPermissions() {
   return {
-    adminPay: [],
     donations: [],
     serverPower: [],
+    rewardManager: [],
+    creditManager: [],
   };
 }
 
@@ -35,8 +42,10 @@ function getPermissions(guildId) {
   return {
     ...defaultPermissions(),
     ...(guild.permissions || {}),
-    adminPay: [...(guild.permissions?.adminPay || [])],
     donations: [...(guild.permissions?.donations || [])],
+    serverPower: [...(guild.permissions?.serverPower || [])],
+    rewardManager: [...(guild.permissions?.rewardManager || [])],
+    creditManager: [...(guild.permissions?.creditManager || [])],
   };
 }
 
@@ -95,16 +104,20 @@ function canAccessArea(interaction, areaKey) {
   return false;
 }
 
-function canManageAdminPay(interaction) {
-  return canAccessArea(interaction, 'adminPay');
-}
-
 function canManageDonations(interaction) {
   return canAccessArea(interaction, 'donations');
 }
 
 function canManageServerPower(interaction) {
   return canAccessArea(interaction, 'serverPower');
+}
+
+function canManageRewards(interaction) {
+  return canAccessArea(interaction, 'rewardManager');
+}
+
+function canManageCredits(interaction) {
+  return canAccessArea(interaction, 'creditManager');
 }
 
 function formatAreaRoles(guildId, areaKey) {
@@ -124,8 +137,9 @@ module.exports = {
   memberHasManageGuild,
   isGuildOwner,
   canAccessArea,
-  canManageAdminPay,
   canManageDonations,
   canManageServerPower,
+  canManageRewards,
+  canManageCredits,
   formatAreaRoles,
 };

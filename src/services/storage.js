@@ -29,7 +29,6 @@ function defaultFeatureSetup() {
     categoryId: null,
     popManager: { forumId: null, threadId: null, messageId: null },
     banLogging: { forumId: null },
-    payLogging: { forumId: null },
     donationLogging: { forumId: null },
     donationStats: {
       channelId: null,
@@ -61,6 +60,18 @@ function defaultPingRoles() {
   };
 }
 
+function defaultCredits() {
+  return { users: {} };
+}
+
+function defaultRewards() {
+  return {
+    boostEnabled: false,
+    boostChannelId: null,
+    boostSeasonalAmount: 3,
+  };
+}
+
 function defaultGuild() {
   return {
     clusterName: 'My ASE Cluster',
@@ -73,7 +84,6 @@ function defaultGuild() {
     features: {
       popManager: false,
       banLogging: false,
-      payLogging: false,
       donationLogging: false,
       donationStats: false,
       adminLogging: false,
@@ -85,22 +95,16 @@ function defaultGuild() {
     botCustom: defaultBotCustom(),
     pingRoles: defaultPingRoles(),
     permissions: {
-      adminPay: [],
       donations: [],
       serverPower: [],
+      rewardManager: [],
+      creditManager: [],
     },
-    adminPay: {
+    credits: defaultCredits(),
+    rewards: defaultRewards(),
+    donations: {
       currency: 'GBP',
       currencySymbol: '£',
-      staff: [],
-      ledger: [],
-      requests: [],
-      activitiesManaged: false,
-      activities: [],
-      paymentMethodsManaged: false,
-      paymentMethods: [],
-    },
-    donations: {
       methods: [],
       records: [],
       statsHistory: [],
@@ -170,21 +174,26 @@ function getGuild(guildId) {
     permissions: {
       ...defaults.permissions,
       ...(current.permissions || {}),
-      adminPay: current.permissions?.adminPay || [],
       donations: current.permissions?.donations || [],
       serverPower: current.permissions?.serverPower || [],
+      rewardManager: current.permissions?.rewardManager || [],
+      creditManager: current.permissions?.creditManager || [],
     },
-    adminPay: {
-      ...defaults.adminPay,
-      ...(current.adminPay || {}),
-      staff: current.adminPay?.staff || [],
-      ledger: current.adminPay?.ledger || [],
-      requests: current.adminPay?.requests || [],
-      activities: current.adminPay?.activities || [],
+    credits: {
+      ...defaults.credits,
+      ...(current.credits || {}),
+      users: current.credits?.users || {},
+    },
+    rewards: {
+      ...defaults.rewards,
+      ...(current.rewards || {}),
     },
     donations: {
       ...defaults.donations,
       ...(current.donations || {}),
+      currency: current.donations?.currency || defaults.donations.currency,
+      currencySymbol:
+        current.donations?.currencySymbol || defaults.donations.currencySymbol,
       methods: current.donations?.methods || [],
       records: current.donations?.records || [],
       statsHistory: current.donations?.statsHistory || [],
@@ -222,22 +231,23 @@ function updateGuild(guildId, patch) {
   if (patch.pingRoles) {
     next.pingRoles = { ...(current.pingRoles || {}), ...patch.pingRoles };
   }
-  if (patch.adminPay) {
-    next.adminPay = {
-      ...(current.adminPay || {}),
-      ...patch.adminPay,
-      staff: patch.adminPay.staff ?? current.adminPay?.staff ?? [],
-      ledger: patch.adminPay.ledger ?? current.adminPay?.ledger ?? [],
-      requests: patch.adminPay.requests ?? current.adminPay?.requests ?? [],
-      activities: patch.adminPay.activities ?? current.adminPay?.activities ?? [],
-      paymentMethods:
-        patch.adminPay.paymentMethods ?? current.adminPay?.paymentMethods ?? [],
-    };
-  }
   if (patch.permissions) {
     next.permissions = {
       ...(current.permissions || {}),
       ...patch.permissions,
+    };
+  }
+  if (patch.credits) {
+    next.credits = {
+      ...(current.credits || {}),
+      ...patch.credits,
+      users: patch.credits.users ?? current.credits?.users ?? {},
+    };
+  }
+  if (patch.rewards) {
+    next.rewards = {
+      ...(current.rewards || {}),
+      ...patch.rewards,
     };
   }
   if (patch.donations) {
@@ -426,4 +436,6 @@ module.exports = {
   defaultFeatureSetup,
   defaultBotCustom,
   defaultPingRoles,
+  defaultCredits,
+  defaultRewards,
 };

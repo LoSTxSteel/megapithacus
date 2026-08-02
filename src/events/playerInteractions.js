@@ -93,7 +93,7 @@ async function handlePlayerInteraction(interaction) {
       });
       return true;
     }
-    await interaction.update(profilePayload(profile));
+    await interaction.update(profilePayload(profile, interaction.guildId));
     return true;
   }
 
@@ -228,7 +228,7 @@ async function handlePlayerInteraction(interaction) {
       });
       return true;
     }
-    await interaction.update(profilePayload(profile));
+    await interaction.update(profilePayload(profile, interaction.guildId));
     return true;
   }
 
@@ -282,7 +282,7 @@ async function handlePlayerInteraction(interaction) {
       result.banLog?.embed || buildBanLogEmbed(result.ban),
     ];
     const updated = getPlayerById(interaction.guildId, profileId);
-    if (updated) embeds.push(profileEmbed(updated));
+    if (updated) embeds.push(profileEmbed(updated, interaction.guildId));
 
     await interaction.editReply({
       content: null,
@@ -342,7 +342,7 @@ async function handlePlayerInteraction(interaction) {
       });
       return true;
     }
-    await interaction.update(profilePayload(profile));
+    await interaction.update(profilePayload(profile, interaction.guildId));
     return true;
   }
 
@@ -396,7 +396,7 @@ async function handlePlayerInteraction(interaction) {
       result.unbanLog?.embed || buildUnbanLogEmbed(result.ban, { reason: draft.reasonText }),
     ];
     const updated = getPlayerById(interaction.guildId, profileId);
-    if (updated) embeds.push(profileEmbed(updated));
+    if (updated) embeds.push(profileEmbed(updated, interaction.guildId));
 
     await interaction.editReply({
       content: null,
@@ -526,7 +526,7 @@ async function handlePlayerInteraction(interaction) {
     await interaction.editReply({
       embeds: [
         successEmbed('Player kicked', result.message),
-        ...(profile ? [profileEmbed(profile)] : []),
+        ...(profile ? [profileEmbed(profile, interaction.guildId)] : []),
       ],
       components: profile ? [moderationMenu(profile.id)] : [],
     });

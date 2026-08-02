@@ -92,7 +92,8 @@ module.exports = {
             [
               '1. `/management` → **Server Setup** — add Nitrado tokens & sync maps',
               '2. `/management` → **Server Management** → **Server power** — start / stop / restart',
-              '3. `/permissions` — tweak which roles can use Admin Pay, Donations, Server power',
+              '3. `/permissions` — tweak which roles can use Donations, Rewards, Credits, Server power',
+              '4. `/rewardmanager` — optional boost thank-yous (+3 seasonal credit)',
             ].join('\n')
           ),
         ],

@@ -20,6 +20,7 @@ module.exports = {
           name: 'Everyone',
           value: [
             '`/help` — this message',
+            '`/credit` — view your seasonal & permanent credit',
             '`/notify` — opt in to announcement DMs (discounts, updates)',
             '`/unnotify` — opt out of announcement DMs',
             '`/subscribe` — subscribe info (currently under maintenance)',
@@ -35,10 +36,11 @@ module.exports = {
             '• **Server Setup** — Nitrado tokens & sync',
             '• **Server Management** — ping roles for bans/unbans/kicks',
             '• **Customise Bot** — colour & footer (watermark always stays)',
-            '• **Feature Management** — Pop, Ban, Pay, Donation, Admin, Chat logs',
+            '• **Feature Management** — Pop, Ban, Donation, Admin, Chat logs',
             '',
-            '`/adminpay manage` — Admin Pay Manager',
-            '`/adminpay board` — staff board + Admin Pay forum',
+            '`/rewardmanager` — enable/disable boost rewards & set thank-you channel',
+            '`/creditmanager` — add, remove, or wipe seasonal/permanent credit',
+            '`/creditview` — view another user’s credit balance',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/player search` — find players (ban/unban/kick on profile)',
@@ -47,7 +49,7 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — set which roles can use Admin Pay / Donations (owner only)',
+            '`/permissions` — set which roles can use Donations / Rewards / Credits / Server power (owner only)',
         },
         {
           name: 'Feature setup',

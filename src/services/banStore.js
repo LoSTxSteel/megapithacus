@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { dataDirFrom } = require('../utils/paths');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = dataDirFrom(__dirname);
 const BANS_FILE = path.join(DATA_DIR, 'bans.json');
 
 function ensureStore() {
@@ -141,18 +142,52 @@ function listActiveBans(guildId) {
   return readAll().bans.filter((b) => b.guildId === guildId && b.active);
 }
 
+/** Total bans issued by the bot (active + lifted), optionally for one guild. */
+function countBansIssued(guildId = null) {
+  const bans = readAll().bans || [];
+  if (!guildId) return bans.length;
+  return bans.filter((b) => b.guildId === guildId).length;
+}
+
+function matchesPlayerBan(ban, profile) {
+  if (!ban || !profile) return false;
+  if (profile.id && ban.profileId === profile.id) return true;
+  if (profile.gamertag && ban.gamertag && ban.gamertag === profile.gamertag) {
+    return true;
+  }
+  if (
+    profile.specimenImplant &&
+    ban.specimenImplant &&
+    ban.specimenImplant === profile.specimenImplant
+  ) {
+    return true;
+  }
+  if (
+    profile.gamertag &&
+    ban.targetGamertag &&
+    ban.targetGamertag === profile.gamertag
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function findActiveBanForPlayer(guildId, profile) {
   const bans = readAll().bans.filter((b) => b.guildId === guildId && b.active);
-  return (
-    bans.find(
-      (b) =>
-        b.profileId === profile.id ||
-        (profile.gamertag && b.gamertag === profile.gamertag) ||
-        (profile.specimenImplant &&
-          b.specimenImplant &&
-          b.specimenImplant === profile.specimenImplant)
-    ) || null
-  );
+  return bans.find((b) => matchesPlayerBan(b, profile)) || null;
+}
+
+/**
+ * All ban records for a player (active + lifted), newest first.
+ */
+function listBansForPlayer(guildId, profile) {
+  return readAll()
+    .bans.filter((b) => b.guildId === guildId && matchesPlayerBan(b, profile))
+    .sort((a, b) => {
+      const at = new Date(b.startsAt || b.createdAt || 0).getTime();
+      const bt = new Date(a.startsAt || a.createdAt || 0).getTime();
+      return at - bt;
+    });
 }
 
 function deactivateBan(banId, patch = {}) {
@@ -219,7 +254,9 @@ module.exports = {
   updateBan,
   deactivateBan,
   listActiveBans,
+  countBansIssued,
   findActiveBanForPlayer,
+  listBansForPlayer,
   getBanById,
   listBansWithEndTimes,
   listBansNeedingReminders,

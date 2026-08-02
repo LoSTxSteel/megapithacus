@@ -1,10 +1,10 @@
 const { Events } = require('discord.js');
 const { errorEmbed } = require('../utils/embeds');
 const { handleManagement } = require('../management/hub');
-const { handleAdminPayInteraction } = require('../management/adminPayHub');
+const { handleDonateHubInteraction } = require('../management/donateHub');
 const { handlePlayerInteraction } = require('./playerInteractions');
 const { handlePermissionsInteraction } = require('../commands/permissions');
-const { handlePayBoardInteraction } = require('./payBoardInteractions');
+const { handleDonateInteraction } = require('./donateInteractions');
 
 function isManagementInteraction(interaction) {
   const id = interaction.customId;
@@ -41,11 +41,11 @@ module.exports = {
         return;
       }
 
-      if (await handlePayBoardInteraction(interaction)) {
+      if (await handleDonateInteraction(interaction)) {
         return;
       }
 
-      if (await handleAdminPayInteraction(interaction)) {
+      if (await handleDonateHubInteraction(interaction)) {
         return;
       }
 
