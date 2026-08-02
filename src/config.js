@@ -1,4 +1,24 @@
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const dotenv = require('dotenv');
+
+function loadEnv() {
+  const candidates = [
+    path.join(process.cwd(), '.env'),
+    path.join(__dirname, '.env'),
+    path.join(__dirname, '..', '.env'),
+  ];
+  for (const file of candidates) {
+    if (fs.existsSync(file)) {
+      dotenv.config({ path: file });
+      return file;
+    }
+  }
+  dotenv.config();
+  return null;
+}
+
+loadEnv();
 
 function required(name) {
   const value = process.env[name];

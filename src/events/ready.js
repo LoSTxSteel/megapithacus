@@ -14,9 +14,15 @@ module.exports = {
   async execute(client) {
     console.log(`${brand.name} online as ${client.user.tag}`);
     try {
-      await deploySlashCommands(client);
+      const result = await deploySlashCommands(client);
+      if (result?.names?.length) {
+        console.log('Slash deploy names:', result.names.join(', '));
+      }
     } catch (error) {
       console.warn('Slash command deploy failed:', error.message);
+      if (error.rawError) {
+        console.warn('Slash deploy details:', JSON.stringify(error.rawError));
+      }
     }
     startStatusRotation(client);
     startPopManager(client);

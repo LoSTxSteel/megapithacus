@@ -8,7 +8,31 @@ jobs:
   restart:
     runs-on: ubuntu-latest
     steps:
-      - uses: fjogeleit/http-request-action@v1.16.3
+      - uses: actions/checkout@v4
+
+      # Upload the git-sync bootstrap so the host can pull the rest of the branch
+      # even if the panel still has a stale package from a manual zip upload.
+      - name: Upload bootstrap index.js to Cybrancee
+        env:
+          PANEL_URL: https://panel.cybrancee.com
+          SERVER_ID: ${{ vars.SERVER_ID }}
+          API_KEY: ${{ secrets.PTERODACTYL_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVER_ID}" ] || [ -z "${API_KEY}" ]; then
+            echo "Missing SERVER_ID or PTERODACTYL_API_KEY — skipping file upload"
+            exit 0
+          fi
+          curl --fail-with-body -X POST \
+            "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/write?file=%2Findex.js" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: text/plain" \
+            --data-binary @index.js
+          echo "Uploaded /index.js"
+
+      - name: Restart Cybrancee server
+        uses: fjogeleit/http-request-action@v1.16.3
         with:
           url: 'https://panel.cybrancee.com/api/client/servers/${{ vars.SERVER_ID }}/power'
           method: 'POST'

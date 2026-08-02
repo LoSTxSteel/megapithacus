@@ -32,12 +32,12 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName('wipe-seasonal')
-        .setDescription('Wipe everyone’s seasonal credit')
+        .setDescription("Wipe everyone's seasonal credit")
     )
     .addSubcommand((sub) =>
       sub
         .setName('wipe-permanent')
-        .setDescription('Wipe everyone’s permanent credit')
+        .setDescription("Wipe everyone's permanent credit")
     )
     .addSubcommand((sub) =>
       sub

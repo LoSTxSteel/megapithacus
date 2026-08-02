@@ -7,7 +7,7 @@ const { getGuild } = require('../services/storage');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('creditview')
-    .setDescription('View a user’s seasonal and permanent credit')
+    .setDescription("View a user's seasonal and permanent credit")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addUserOption((opt) =>
       opt

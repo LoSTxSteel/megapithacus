@@ -40,7 +40,7 @@ module.exports = {
             '',
             '`/rewardmanager` — enable/disable boost rewards & set thank-you channel',
             '`/creditmanager` — add, remove, or wipe seasonal/permanent credit',
-            '`/creditview` — view another user’s credit balance',
+            "`/creditview` — view another user's credit balance",
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/player search` — find players (ban/unban/kick on profile)',

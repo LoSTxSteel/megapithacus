@@ -93,19 +93,35 @@ client.commands = new Collection();
 
 const commandsPath = path.join(appRoot, 'commands');
 for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))) {
-  const command = require(path.join(commandsPath, file));
-  client.commands.set(command.data.name, command);
+  try {
+    const command = require(path.join(commandsPath, file));
+    if (!command?.data?.name || typeof command.execute !== 'function') {
+      console.warn(`Skipping command ${file}: expected module.exports = { data, execute }`);
+      continue;
+    }
+    client.commands.set(command.data.name, command);
+  } catch (error) {
+    console.error(`Failed to load command ${file}:`, error.message);
+  }
 }
+console.log(
+  `Loaded ${client.commands.size} slash command(s):`,
+  [...client.commands.keys()].sort().join(', ')
+);
 
 const eventsPath = path.join(appRoot, 'events');
 for (const file of fs.readdirSync(eventsPath).filter((f) => f.endsWith('.js'))) {
-  const event = require(path.join(eventsPath, file));
-  // Skip helper modules that are not Discord event handlers
-  if (!event?.name || typeof event.execute !== 'function') continue;
-  if (event.once) {
-    client.once(event.name, (...args) => event.execute(...args));
-  } else {
-    client.on(event.name, (...args) => event.execute(...args));
+  try {
+    const event = require(path.join(eventsPath, file));
+    // Skip helper modules that are not Discord event handlers
+    if (!event?.name || typeof event.execute !== 'function') continue;
+    if (event.once) {
+      client.once(event.name, (...args) => event.execute(...args));
+    } else {
+      client.on(event.name, (...args) => event.execute(...args));
+    }
+  } catch (error) {
+    console.error(`Failed to load event ${file}:`, error.message);
   }
 }
 

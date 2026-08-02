@@ -7,10 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const PACK_VERSION = '6';
+const PACK_VERSION = '7';
 const root = path.join(__dirname, '..');
 const downloads = path.join(root, '..');
-const outZip = path.join(downloads, 'megapithacus-cybrancee-v6.zip');
+const outZip = path.join(downloads, 'megapithacus-cybrancee-v7.zip');
 const staging = path.join(downloads, 'megapithacus-cybrancee-staging');
 const appStage = path.join(downloads, 'megapithacus-cybrancee-app');
 
@@ -96,14 +96,14 @@ function extract() {
     pack = require('./appPack.js');
   } catch (err) {
     console.error('Missing appPack.js next to index.js.');
-    console.error('Upload megapithacus-cybrancee-v6.zip and extract ALL files into /home/container.');
+    console.error('Upload megapithacus-cybrancee-v7.zip and extract ALL files into /home/container.');
     console.error('Required: index.js, appPack.js, package.json, .env');
     process.exit(1);
   }
 
   const buf = Buffer.isBuffer(pack) ? pack : pack?.default;
   if (!Buffer.isBuffer(buf) || buf.length < 100) {
-    console.error('appPack.js is empty or invalid. Re-upload megapithacus-cybrancee-v6.zip.');
+    console.error('appPack.js is empty or invalid. Re-upload megapithacus-cybrancee-v7.zip.');
     process.exit(1);
   }
 
@@ -153,7 +153,7 @@ if (fs.existsSync(path.join(root, '.env.example'))) {
 fs.writeFileSync(
   path.join(staging, 'README-UPLOAD.txt'),
   [
-    'CYBRANCEE — megapithacus-cybrancee-v6.zip',
+    'CYBRANCEE — megapithacus-cybrancee-v7.zip',
     '',
     '1. Stop server',
     '2. Delete EVERYTHING in /home/container',

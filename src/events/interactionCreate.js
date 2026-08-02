@@ -1,14 +1,32 @@
 const { Events } = require('discord.js');
 const { errorEmbed } = require('../utils/embeds');
 const { handleManagement } = require('../management/hub');
-const { handleDonateHubInteraction } = require('../management/donateHub');
 const { handlePlayerInteraction } = require('./playerInteractions');
 const { handlePermissionsInteraction } = require('../commands/permissions');
-const { handleDonateInteraction } = require('./donateInteractions');
 
 function isManagementInteraction(interaction) {
   const id = interaction.customId;
   return typeof id === 'string' && id.startsWith('mgmt:');
+}
+
+function tryDonateInteraction(interaction) {
+  try {
+    const { handleDonateInteraction } = require('./donateInteractions');
+    return handleDonateInteraction(interaction);
+  } catch (error) {
+    console.warn('Donate interactions unavailable:', error.message);
+    return false;
+  }
+}
+
+function tryDonateHubInteraction(interaction) {
+  try {
+    const { handleDonateHubInteraction } = require('../management/donateHub');
+    return handleDonateHubInteraction(interaction);
+  } catch (error) {
+    console.warn('Donate hub unavailable:', error.message);
+    return false;
+  }
 }
 
 module.exports = {
@@ -41,11 +59,11 @@ module.exports = {
         return;
       }
 
-      if (await handleDonateInteraction(interaction)) {
+      if (await tryDonateInteraction(interaction)) {
         return;
       }
 
-      if (await handleDonateHubInteraction(interaction)) {
+      if (await tryDonateHubInteraction(interaction)) {
         return;
       }
 

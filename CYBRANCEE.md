@@ -43,13 +43,24 @@ Copy from `.env.example` and fill in values.
 ## After first upload
 
 1. Start the bot once so dependencies install.
-2. In the console / file manager, run slash command deploy if needed:
+2. Slash commands auto-deploy on ready. You can also run:
 
 ```bash
 npm run deploy
 ```
 
 3. In Discord: `/setup` → `/management` → Server Setup (Nitrado) → enable features.
+
+## Git push → host update
+
+Pushing to `cursor/admin-pay-board` (or `main`) triggers a GitHub Action that uploads `index.js` and restarts the panel. On boot, that entry pulls the latest branch from GitHub (keeps `.env`, `data/`, `node_modules`).
+
+If the GitHub repo is **private**, set on the panel:
+
+```env
+MEGAPITHACUS_GIT_TOKEN=ghp_...
+MEGAPITHACUS_GIT_BRANCH=cursor/admin-pay-board
+```
 
 ## Notes
 

@@ -6,14 +6,16 @@ const config = require('../config');
  * Safe to call on every ready — keeps /setup etc. in sync after deploys.
  */
 async function deploySlashCommands(client) {
-  const commands = [...client.commands.values()]
-    .filter((c) => c?.data?.toJSON)
-    .map((c) => c.data.toJSON());
+  const loaded = [...client.commands.values()].filter((c) => c?.data?.toJSON);
+  const commands = loaded.map((c) => c.data.toJSON());
+  const names = commands.map((c) => c.name).sort();
 
   if (!commands.length) {
     console.warn('Slash deploy: no commands loaded');
     return { ok: false, count: 0 };
   }
+
+  console.log(`Slash deploy: pushing ${commands.length} command(s): ${names.join(', ')}`);
 
   const rest = new REST({ version: '10' }).setToken(config.token());
   const clientId = config.clientId();
@@ -29,7 +31,7 @@ async function deploySlashCommands(client) {
     console.log(`Slash commands deployed globally (${commands.length})`);
   }
 
-  return { ok: true, count: commands.length, guildId: guildId || null };
+  return { ok: true, count: commands.length, names, guildId: guildId || null };
 }
 
 module.exports = { deploySlashCommands };
