@@ -30,6 +30,12 @@ const {
 } = require('../services/featureSetup');
 const { refreshGuildPop } = require('../services/popManager');
 const { refreshGuildLogBoards } = require('../services/logBoards');
+const {
+  settingsFor,
+  punishmentSummary,
+  postSetupReadyEmbed,
+} = require('../services/gamerscoreDetection');
+const { hasApiKey } = require('../services/gamerscore');
 const { baseEmbed, errorEmbed } = require('../utils/embeds');
 const { customisePanel, handleCustomiseInteraction } = require('./customiseBot');
 const { serverPanel, handleServerInteraction } = require('./serverManagement');
@@ -357,14 +363,14 @@ function featureSetupText(guild, key) {
     extras.push(`Live channel: ${popDest ? `<#${popDest}>` : '_Not created_'}`);
   }
   if (key === 'gamerscoreDetection') {
-    const gs = guild.gamerscoreDetection || {};
+    const settings = settingsFor(guild);
     extras.push('Checks Xbox gamerscore when a player joins a map (60s poll).');
     extras.push(
-      `Minimum: **${Math.max(0, Number(gs.minScore) || 0)}** · Punishment: **${
-        gs.punishment === 'ban' ? 'ban' : 'kick'
-      }**`
+      `Minimum: **${settings.minScore}** · Punishment: **${punishmentSummary(settings)}**`
     );
-    extras.push('Configure thresholds with `/gamerscoremanager`. Needs `OPENXBL_API_KEY`.');
+    extras.push(
+      'Setup includes min score + punishment dropdowns. Also `/gamerscoremanager`. Needs `OPENXBL_API_KEY`.'
+    );
   }
 
   const destLine = FEATURE_META[key]?.perMap
@@ -481,9 +487,123 @@ function featureDetailPanel(guild, key) {
       .setStyle(ButtonStyle.Secondary)
   );
 
+  if (key === 'gamerscoreDetection') {
+    controls.addComponents(
+      new ButtonBuilder()
+        .setCustomId('mgmt:gscore:wizard')
+        .setLabel('Thresholds')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+
   return {
     embeds: [embed],
     components: [categorySelect('features'), controls],
+  };
+}
+
+function gamerscoreSetupWizard(guild, { content = null } = {}) {
+  const settings = settingsFor(guild);
+  const configured = isFeatureConfigured(guild, 'gamerscoreDetection');
+  const channelId = guild.featureSetup?.gamerscoreDetection?.channelId;
+
+  const embed = baseEmbed('Gamerscore Detection setup')
+    .setDescription(
+      [
+        'Customize thresholds, then create **#gamerscore-detection**.',
+        'You can also manage this later with `/gamerscoremanager`.',
+        '',
+        `Minimum gamerscore: \`${settings.minScore}\``,
+        `Punishment: **${punishmentSummary(settings)}**`,
+        `Log channel: ${channelId ? `<#${channelId}>` : '_not created yet_'}`,
+        `OpenXBL API key: **${hasApiKey() ? 'configured' : 'missing'}**`,
+      ].join('\n')
+    );
+
+  const minRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('mgmt:gscore:min')
+      .setPlaceholder('Minimum gamerscore')
+      .addOptions(
+        { label: '0 (disabled threshold)', value: '0', description: 'Allow any score' },
+        { label: '500', value: '500' },
+        { label: '1,000', value: '1000' },
+        { label: '2,500', value: '2500' },
+        { label: '5,000', value: '5000' },
+        { label: '10,000', value: '10000' },
+        {
+          label: 'Custom…',
+          value: 'custom',
+          description: 'Enter a custom minimum',
+        }
+      )
+  );
+
+  const punishRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('mgmt:gscore:punish')
+      .setPlaceholder(`Punishment (current: ${settings.punishment})`)
+      .addOptions(
+        {
+          label: 'Kick',
+          value: 'kick',
+          description: 'Remove from the map (no banlist)',
+        },
+        {
+          label: 'Ban',
+          value: 'ban',
+          description: 'Temp or permanent via duration below',
+        }
+      )
+  );
+
+  const durationRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('mgmt:gscore:duration')
+      .setPlaceholder(
+        settings.punishment === 'ban'
+          ? `Ban duration (current: ${
+              settings.durationMinutes === 0
+                ? 'permanent'
+                : `${settings.durationMinutes}m`
+            })`
+          : 'Ban duration (only used when punishment is ban)'
+      )
+      .addOptions(
+        { label: '60 minutes', value: '60' },
+        { label: '24 hours', value: '1440' },
+        { label: '7 days', value: '10080' },
+        { label: '30 days', value: '43200' },
+        { label: 'Permanent', value: '0' },
+        {
+          label: 'Custom minutes…',
+          value: 'custom',
+          description: 'Enter minutes (0 = permanent)',
+        }
+      )
+  );
+
+  const actions = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('mgmt:gscore:finish')
+      .setLabel(configured ? 'Save & re-run channel setup' : 'Create channel & finish')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('mgmt:gscore:back')
+      .setLabel('Back')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return {
+    embeds: [embed],
+    components: [
+      categorySelect('features'),
+      minRow,
+      punishRow,
+      durationRow,
+      actions,
+    ],
+    content,
   };
 }
 
@@ -1003,6 +1123,17 @@ async function handleManagement(interaction) {
       return;
     }
 
+    // Gamerscore: configure min score / punishment before creating the channel
+    if (key === 'gamerscoreDetection') {
+      await interaction.update(
+        gamerscoreSetupWizard(getGuild(guildId), {
+          content:
+            'Set minimum gamerscore and punishment, then finish to create **#gamerscore-detection**.',
+        })
+      );
+      return;
+    }
+
     await interaction.deferUpdate();
     try {
       const result = await setupFeature(interaction.guild, key);
@@ -1038,6 +1169,192 @@ async function handleManagement(interaction) {
       });
     }
     return;
+  }
+
+  // Gamerscore Detection — Feature Management setup wizard
+  if (id?.startsWith('mgmt:gscore:')) {
+    if (interaction.isButton() && id === 'mgmt:gscore:wizard') {
+      await interaction.update(gamerscoreSetupWizard(getGuild(guildId)));
+      return;
+    }
+
+    if (interaction.isButton() && id === 'mgmt:gscore:back') {
+      await interaction.update({
+        ...featureDetailPanel(getGuild(guildId), 'gamerscoreDetection'),
+        content: null,
+      });
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && id === 'mgmt:gscore:min') {
+      const value = interaction.values[0];
+      if (value === 'custom') {
+        await interaction.showModal(
+          new ModalBuilder()
+            .setCustomId('mgmt:gscore:modal:min')
+            .setTitle('Minimum gamerscore')
+            .addComponents(
+              new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('value')
+                  .setLabel('Minimum Xbox gamerscore')
+                  .setStyle(TextInputStyle.Short)
+                  .setRequired(true)
+                  .setMinLength(1)
+                  .setMaxLength(12)
+                  .setValue(String(settingsFor(getGuild(guildId)).minScore))
+                  .setPlaceholder('e.g. 1000')
+              )
+            )
+        );
+        return;
+      }
+      updateGuild(guildId, {
+        gamerscoreDetection: { minScore: Math.floor(Number(value)) || 0 },
+      });
+      await interaction.update(
+        gamerscoreSetupWizard(getGuild(guildId), {
+          content: `Minimum gamerscore set to \`${Math.floor(Number(value)) || 0}\`.`,
+        })
+      );
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && id === 'mgmt:gscore:punish') {
+      const punishment = interaction.values[0] === 'ban' ? 'ban' : 'kick';
+      updateGuild(guildId, { gamerscoreDetection: { punishment } });
+      await interaction.update(
+        gamerscoreSetupWizard(getGuild(guildId), {
+          content: `Punishment set to **${punishment}**.`,
+        })
+      );
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && id === 'mgmt:gscore:duration') {
+      const value = interaction.values[0];
+      if (value === 'custom') {
+        await interaction.showModal(
+          new ModalBuilder()
+            .setCustomId('mgmt:gscore:modal:duration')
+            .setTitle('Ban duration (minutes)')
+            .addComponents(
+              new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('value')
+                  .setLabel('Minutes (0 = permanent ban)')
+                  .setStyle(TextInputStyle.Short)
+                  .setRequired(true)
+                  .setMinLength(1)
+                  .setMaxLength(12)
+                  .setValue(
+                    String(settingsFor(getGuild(guildId)).durationMinutes)
+                  )
+                  .setPlaceholder('e.g. 60')
+              )
+            )
+        );
+        return;
+      }
+      updateGuild(guildId, {
+        gamerscoreDetection: {
+          durationMinutes: Math.floor(Number(value)) || 0,
+        },
+      });
+      const mins = Math.floor(Number(value)) || 0;
+      await interaction.update(
+        gamerscoreSetupWizard(getGuild(guildId), {
+          content:
+            mins === 0
+              ? 'Ban duration set to **permanent**.'
+              : `Ban duration set to **${mins}** minutes.`,
+        })
+      );
+      return;
+    }
+
+    if (interaction.isModalSubmit() && id === 'mgmt:gscore:modal:min') {
+      const raw = interaction.fields.getTextInputValue('value');
+      const value = Number(String(raw).replace(/,/g, '').trim());
+      if (!Number.isFinite(value) || value < 0 || value > 50_000_000) {
+        await interaction.reply({
+          embeds: [
+            errorEmbed('Enter a whole number between 0 and 50000000.'),
+          ],
+          ephemeral: true,
+        });
+        return;
+      }
+      updateGuild(guildId, {
+        gamerscoreDetection: { minScore: Math.floor(value) },
+      });
+      await interaction.reply({
+        ...gamerscoreSetupWizard(getGuild(guildId), {
+          content: `Minimum gamerscore set to \`${Math.floor(value)}\`.`,
+        }),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (interaction.isModalSubmit() && id === 'mgmt:gscore:modal:duration') {
+      const raw = interaction.fields.getTextInputValue('value');
+      const value = Number(String(raw).trim());
+      if (!Number.isFinite(value) || value < 0 || value > 525600) {
+        await interaction.reply({
+          embeds: [
+            errorEmbed(
+              'Enter minutes as a number from 0 (permanent) to 525600 (1 year).'
+            ),
+          ],
+          ephemeral: true,
+        });
+        return;
+      }
+      updateGuild(guildId, {
+        gamerscoreDetection: { durationMinutes: Math.floor(value) },
+      });
+      await interaction.reply({
+        ...gamerscoreSetupWizard(getGuild(guildId), {
+          content:
+            Math.floor(value) === 0
+              ? 'Ban duration set to **permanent**.'
+              : `Ban duration set to **${Math.floor(value)}** minutes.`,
+        }),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (interaction.isButton() && id === 'mgmt:gscore:finish') {
+      await interaction.deferUpdate();
+      try {
+        const result = await setupFeature(
+          interaction.guild,
+          'gamerscoreDetection'
+        );
+        await postSetupReadyEmbed(interaction.guild, guildId).catch((err) =>
+          console.warn('Gamerscore setup embed failed:', err.message)
+        );
+        const settings = settingsFor(getGuild(guildId));
+        const dest = result.channel ? `→ ${result.channel}` : '';
+        await interaction.editReply({
+          ...featureDetailPanel(getGuild(guildId), 'gamerscoreDetection'),
+          content: [
+            `Setup complete for **Gamerscore Detection** ${dest}`,
+            `Minimum \`${settings.minScore}\` · Punishment: **${punishmentSummary(settings)}**`,
+            'Posted a ready embed in the detection channel. Enable the feature when you want join checks live.',
+          ].join('\n'),
+        });
+      } catch (error) {
+        await interaction.editReply(
+          gamerscoreSetupWizard(getGuild(guildId), {
+            content: `Setup failed: ${error.message}`,
+          })
+        );
+      }
+      return;
+    }
   }
 
   // Features — enable / disable

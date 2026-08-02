@@ -140,7 +140,17 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
   }
 
   if (incoming.gamertag) profile.gamertag = incoming.gamertag;
-  if (incoming.characterName) profile.characterName = incoming.characterName;
+  if (incoming.characterName) {
+    const char = String(incoming.characterName).trim();
+    const gt = String(incoming.gamertag || profile.gamertag || '')
+      .trim()
+      .toLowerCase();
+    // Never store gamertag echo as the character / in-game name
+    const isEcho = gt && char.toLowerCase() === gt;
+    if (!isEcho) {
+      profile.characterName = char;
+    }
+  }
   if (incoming.specimenImplant && looksLikeSpecimenImplant(incoming.specimenImplant)) {
     profile.specimenImplant = String(incoming.specimenImplant).trim();
   }
@@ -243,26 +253,81 @@ function getPlayerById(guildId, id) {
 /**
  * Normalize a Nitrado / gameserver player payload into our profile shape.
  *
- * Nitrado Player Management shape (arkxb):
- *   { name, id, id_type, online, actions }
+ * Nitrado Player Management shape (arkxb / ASE Xbox):
+ *   { name, id, id_type, online, actions, … }
  * - `id` is Nitrado's internal kick/ban action id — NOT the specimen implant.
  * - Specimen / UE4 PlayerDataID is often in `id2` (when present) or explicit fields.
+ * - Xbox: `name` is usually the gamertag; character/IGN may be `username`,
+ *   `playerName`, `characterName`, etc. Never copy gamertag into characterName.
  */
 function normalizeOnlinePlayer(raw, { map, serviceId }) {
-  const gamertag =
-    raw.gamertag ||
-    raw.gamer_tag ||
-    raw.xbox_gamertag ||
-    raw.username ||
-    raw.name ||
-    null;
+  const asText = (...values) => {
+    const v = firstTruthy(...values);
+    return v != null ? String(v).trim() : null;
+  };
 
-  const characterName =
-    raw.character_name ||
-    raw.characterName ||
-    raw.player_name ||
-    raw.ign ||
-    null;
+  // Explicit platform / Xbox tags — never treat character fields as gamertag.
+  let gamertag = asText(
+    raw.gamertag,
+    raw.gamer_tag,
+    raw.xbox_gamertag,
+    raw.xboxGamertag,
+    raw.platform_name,
+    raw.platformName
+  );
+
+  // Explicit character / survivor / IGN fields.
+  let characterName = asText(
+    raw.character_name,
+    raw.characterName,
+    raw.player_name,
+    raw.playerName,
+    raw.survivor_name,
+    raw.survivorName,
+    raw.ign,
+    raw.char_name,
+    raw.charName
+  );
+
+  const name = asText(raw.name);
+  const username = asText(raw.username, raw.user_name, raw.userName);
+
+  // ASE Xbox: `name` is the Xbox gamertag when no explicit tag is present.
+  if (!gamertag && name) {
+    gamertag = name;
+  }
+
+  // Only use username as gamertag when nothing else identifies the Xbox account
+  // and we already have a distinct character name (or no character at all).
+  if (!gamertag && username) {
+    if (
+      !characterName ||
+      characterName.toLowerCase() !== username.toLowerCase()
+    ) {
+      // If username looks like the only identity field, keep as gamertag.
+      if (!characterName) gamertag = username;
+    }
+  }
+
+  // Prefer username / name as character when they differ from gamertag.
+  if (
+    !characterName &&
+    username &&
+    gamertag &&
+    username.toLowerCase() !== gamertag.toLowerCase()
+  ) {
+    characterName = username;
+  }
+  if (
+    !characterName &&
+    name &&
+    gamertag &&
+    name.toLowerCase() !== gamertag.toLowerCase()
+  ) {
+    characterName = name;
+  }
+
+  // Do NOT fall back characterName → gamertag (that made In-game name wrong).
 
   const nitradoPlayerId = firstTruthy(raw.id);
   const idType = String(raw.id_type || raw.idType || '').toLowerCase();
@@ -312,12 +377,8 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
   const tribeId = raw.tribe_id || raw.tribeId || raw.TribeID || null;
 
   return {
-    gamertag: gamertag ? String(gamertag) : null,
-    characterName: characterName
-      ? String(characterName)
-      : gamertag
-        ? String(gamertag)
-        : null,
+    gamertag: gamertag || null,
+    characterName: characterName || null,
     specimenImplant,
     nitradoPlayerId: nitradoPlayerId != null ? String(nitradoPlayerId).trim() : null,
     platformId: platformId != null ? String(platformId).trim() : null,

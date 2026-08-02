@@ -4,6 +4,12 @@ const config = require('../config');
 const cache = new Map();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
+/** OpenXBL: api.xbl.io uses /v2/… ; xbl.io uses /api/v2/… */
+const OPENXBL_BASES = [
+  { host: 'https://api.xbl.io', prefix: '/v2' },
+  { host: 'https://xbl.io', prefix: '/api/v2' },
+];
+
 function apiKey() {
   return (
     config.openxblApiKey ||
@@ -29,13 +35,31 @@ function parseScore(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function extractGamerscore(data) {
-  if (data == null || typeof data !== 'object') return null;
+/** OpenXBL wraps most payloads as `{ content: … }`. */
+function unwrapPayload(data) {
+  if (data == null || typeof data !== 'object') return data;
+  if (data.content != null && typeof data.content === 'object') {
+    return data.content;
+  }
+  return data;
+}
 
-  const direct = parseScore(data.gamerscore ?? data.Gamerscore ?? data.gamerScore);
+function extractGamerscore(data) {
+  const root = unwrapPayload(data);
+  if (root == null || typeof root !== 'object') return null;
+
+  const direct = parseScore(
+    root.gamerscore ?? root.Gamerscore ?? root.gamerScore ?? root.gamer_score
+  );
   if (direct != null) return direct;
 
-  const lists = [data.profileUsers, data.people, data.profiles, data.results]
+  const lists = [
+    root.profileUsers,
+    root.people,
+    root.profiles,
+    root.results,
+    Array.isArray(root) ? root : null,
+  ]
     .filter(Array.isArray)
     .flat();
 
@@ -43,7 +67,10 @@ function extractGamerscore(data) {
     if (!user || typeof user !== 'object') continue;
 
     const nested = parseScore(
-      user.gamerscore ?? user.Gamerscore ?? user.gamerScore
+      user.gamerscore ??
+        user.Gamerscore ??
+        user.gamerScore ??
+        user.gamer_score
     );
     if (nested != null) return nested;
 
@@ -57,6 +84,28 @@ function extractGamerscore(data) {
     }
   }
 
+  return null;
+}
+
+function extractXuid(data) {
+  const root = unwrapPayload(data);
+  if (root == null || typeof root !== 'object') return null;
+
+  if (root.xuid != null && String(root.xuid).trim()) {
+    return String(root.xuid).trim();
+  }
+
+  const lists = [root.people, root.profileUsers, root.profiles, root.results]
+    .filter(Array.isArray)
+    .flat();
+
+  for (const user of lists) {
+    if (!user || typeof user !== 'object') continue;
+    const id = user.xuid ?? user.id ?? user.hostId;
+    if (id != null && String(id).trim() && /^\d{5,}$/.test(String(id).trim())) {
+      return String(id).trim();
+    }
+  }
   return null;
 }
 
@@ -75,6 +124,26 @@ async function fetchOpenXbl(url, key) {
     json = null;
   }
   return { res, json };
+}
+
+function lookupUrls(gamertag) {
+  const encoded = encodeURIComponent(gamertag);
+  const urls = [];
+  for (const { host, prefix } of OPENXBL_BASES) {
+    // Search by gamertag (includes gamerScore on people hub)
+    urls.push(`${host}${prefix}/search/${encoded}`);
+    // Friends/people search — returns profileUsers with Gamerscore settings
+    urls.push(`${host}${prefix}/friends/search?gt=${encoded}`);
+    urls.push(`${host}${prefix}/friends/search/${encoded}`);
+  }
+  return urls;
+}
+
+function accountUrls(xuid) {
+  const id = encodeURIComponent(String(xuid).trim());
+  return OPENXBL_BASES.map(
+    ({ host, prefix }) => `${host}${prefix}/account/${id}`
+  );
 }
 
 /**
@@ -123,17 +192,10 @@ async function getGamerscore(gamertag) {
     return { ok: false, gamerscore: null, gamertag: clean, cached: false, error };
   }
 
-  const encoded = encodeURIComponent(clean);
-  const endpoints = [
-    `https://xbl.io/api/v2/player/gamertag/${encoded}`,
-    `https://api.xbl.io/api/v2/player/gamertag/${encoded}`,
-    `https://xbl.io/api/v2/search/${encoded}`,
-    `https://xbl.io/api/v2/friends/search?gt=${encoded}`,
-  ];
-
   let lastError = 'Xbox API request failed';
+  let foundXuid = null;
 
-  for (const url of endpoints) {
+  for (const url of lookupUrls(clean)) {
     try {
       const { res, json } = await fetchOpenXbl(url, auth);
       if (res.status === 401 || res.status === 403) {
@@ -148,15 +210,48 @@ async function getGamerscore(gamertag) {
         lastError = `OpenXBL HTTP ${res.status}`;
         continue;
       }
-      const score = extractGamerscore(json);
-      if (score == null) {
-        lastError = 'Profile found but gamerscore missing from response';
+
+      // Soft upstream failures sometimes return HTTP 200 with code 503
+      if (json?.code && Number(json.code) >= 400) {
+        lastError = `OpenXBL upstream ${json.code}`;
         continue;
       }
-      cache.set(key, { score, error: null, at: Date.now() });
-      return { ok: true, gamerscore: score, gamertag: clean, cached: false };
+
+      const score = extractGamerscore(json);
+      if (score != null) {
+        cache.set(key, { score, error: null, at: Date.now() });
+        return { ok: true, gamerscore: score, gamertag: clean, cached: false };
+      }
+
+      const xuid = extractXuid(json);
+      if (xuid && !foundXuid) foundXuid = xuid;
+      lastError = 'Profile found but gamerscore missing from response';
     } catch (error) {
       lastError = error.message || 'Network error talking to OpenXBL';
+    }
+  }
+
+  // Fallback: resolve XUID then GET /account/{xuid}
+  if (foundXuid) {
+    for (const url of accountUrls(foundXuid)) {
+      try {
+        const { res, json } = await fetchOpenXbl(url, auth);
+        if (res.status === 401 || res.status === 403) {
+          lastError = 'OpenXBL API key rejected (401/403). Check OPENXBL_API_KEY.';
+          break;
+        }
+        if (!res.ok) {
+          lastError = `OpenXBL HTTP ${res.status}`;
+          continue;
+        }
+        const score = extractGamerscore(json);
+        if (score != null) {
+          cache.set(key, { score, error: null, at: Date.now() });
+          return { ok: true, gamerscore: score, gamertag: clean, cached: false };
+        }
+      } catch (error) {
+        lastError = error.message || 'Network error talking to OpenXBL';
+      }
     }
   }
 
@@ -198,4 +293,6 @@ module.exports = {
   hasApiKey,
   clearGamerscoreCache,
   CACHE_TTL_MS,
+  extractGamerscore,
+  unwrapPayload,
 };

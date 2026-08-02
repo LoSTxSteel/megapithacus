@@ -193,10 +193,19 @@ async function findOnlinePlayer(serviceId, token, name) {
   if (!Array.isArray(players)) return null;
   return (
     players.find((p) => {
-      const n = String(p?.name || p?.username || p?.gamertag || '')
-        .trim()
-        .toLowerCase();
-      return n && n === target;
+      const names = [
+        p?.gamertag,
+        p?.gamer_tag,
+        p?.name,
+        p?.username,
+        p?.characterName,
+        p?.character_name,
+        p?.playerName,
+        p?.player_name,
+      ]
+        .filter(Boolean)
+        .map((v) => String(v).trim().toLowerCase());
+      return names.some((n) => n === target);
     }) || null
   );
 }

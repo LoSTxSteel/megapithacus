@@ -18,6 +18,62 @@ function settingsFor(guild) {
   };
 }
 
+function punishmentSummary(settings) {
+  if (settings.punishment === 'ban') {
+    return settings.durationMinutes > 0
+      ? `temp ban (${settings.durationMinutes} minutes)`
+      : 'permanent ban';
+  }
+  return 'kick';
+}
+
+/**
+ * Post a one-shot “feature is set up and working” embed to #gamerscore-detection.
+ */
+async function postSetupReadyEmbed(discordGuild, guildId) {
+  const guild = getGuild(guildId);
+  const channelId = guild.featureSetup?.gamerscoreDetection?.channelId;
+  if (!channelId) return { ok: false, error: 'No log channel' };
+
+  const channel = await discordGuild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return { ok: false, error: 'Log channel missing' };
+
+  const settings = settingsFor(guild);
+  const embed = brandEmbed(
+    new EmbedBuilder()
+      .setTitle('Gamerscore Detection ready')
+      .setColor(0x2ecc71)
+      .setDescription(
+        [
+          'This feature is **set up and working**.',
+          'Xbox gamerscore is checked when players join a map.',
+        ].join('\n')
+      )
+      .addFields(
+        {
+          name: 'Minimum gamerscore',
+          value: `\`${settings.minScore}\``,
+          inline: true,
+        },
+        {
+          name: 'Punishment',
+          value: punishmentSummary(settings),
+          inline: true,
+        },
+        {
+          name: 'OpenXBL API',
+          value: hasApiKey() ? 'configured' : 'missing (fail-open)',
+          inline: true,
+        }
+      ),
+    guild,
+    { context: 'Gamerscore detection' }
+  );
+
+  await channel.send({ embeds: [embed] });
+  return { ok: true };
+}
+
 function botModerator(discordGuild) {
   const user = discordGuild.client?.user;
   const id = user?.id || '0';
@@ -259,5 +315,7 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
 module.exports = {
   handleGamerscoreJoin,
   settingsFor,
+  punishmentSummary,
   postDetectionLog,
+  postSetupReadyEmbed,
 };

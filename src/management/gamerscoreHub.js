@@ -15,7 +15,11 @@ const {
 } = require('../services/featureSetup');
 const { canManageGamerscore } = require('../services/guildPermissions');
 const { hasApiKey } = require('../services/gamerscore');
-const { settingsFor } = require('../services/gamerscoreDetection');
+const {
+  settingsFor,
+  punishmentSummary,
+  postSetupReadyEmbed,
+} = require('../services/gamerscoreDetection');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
 
 function denyGamerscore(interaction) {
@@ -49,20 +53,13 @@ function settingsSummary(guildId) {
   const enabled = isFeatureEnabled(guild, 'gamerscoreDetection');
   const configured = isFeatureConfigured(guild, 'gamerscoreDetection');
   const channelId = guild.featureSetup?.gamerscoreDetection?.channelId;
-  const punishLine =
-    settings.punishment === 'ban'
-      ? settings.durationMinutes > 0
-        ? `temp ban **${settings.durationMinutes}** minutes`
-        : '**permanent ban**'
-      : '**kick**';
-
   return [
     `Feature: **${enabled ? 'enabled' : 'disabled'}**${
       configured ? '' : ' _(needs setup)_'
     }`,
     `Log channel: ${channelId ? `<#${channelId}>` : '_not created_'}`,
     `Minimum gamerscore: \`${settings.minScore}\``,
-    `Punishment: ${punishLine}`,
+    `Punishment: **${punishmentSummary(settings)}**`,
     `Log passes: **${settings.logPasses ? 'yes' : 'no'}**`,
     `OpenXBL API key: **${hasApiKey() ? 'configured' : 'missing'}**`,
   ].join('\n');
@@ -188,8 +185,15 @@ async function handleGamerscoreManagerInteraction(interaction) {
     if (action === 'enable') {
       await interaction.deferUpdate();
       try {
-        if (!isFeatureConfigured(getGuild(guildId), 'gamerscoreDetection')) {
+        const wasConfigured = isFeatureConfigured(
+          getGuild(guildId),
+          'gamerscoreDetection'
+        );
+        if (!wasConfigured) {
           await setupFeature(interaction.guild, 'gamerscoreDetection');
+          await postSetupReadyEmbed(interaction.guild, guildId).catch((err) =>
+            console.warn('Gamerscore setup embed failed:', err.message)
+          );
         }
         updateGuild(guildId, { features: { gamerscoreDetection: true } });
         await interaction.editReply(
@@ -224,10 +228,18 @@ async function handleGamerscoreManagerInteraction(interaction) {
           interaction.guild,
           'gamerscoreDetection'
         );
+        await postSetupReadyEmbed(interaction.guild, guildId).catch((err) =>
+          console.warn('Gamerscore setup embed failed:', err.message)
+        );
+        const settings = settingsFor(getGuild(guildId));
         const dest = result.channel ? `→ ${result.channel}` : '';
         await interaction.editReply(
           buildGamerscoreManagerMessage(guildId, {
-            content: `Setup complete ${dest}`,
+            content: [
+              `Setup complete ${dest}`,
+              `Minimum \`${settings.minScore}\` · Punishment: **${punishmentSummary(settings)}**`,
+              'Posted a ready embed in the detection channel.',
+            ].join('\n'),
           })
         );
       } catch (error) {

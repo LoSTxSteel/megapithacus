@@ -116,7 +116,16 @@ function profileEmbed(profile, guildId) {
       )
       .addFields(
         { name: 'Xbox Gamertag', value: profile.gamertag || '—', inline: true },
-        { name: 'In-game name', value: profile.characterName || '—', inline: true },
+        {
+          name: 'In-game name',
+          value:
+            profile.characterName &&
+            profile.gamertag &&
+            profile.characterName.toLowerCase() === profile.gamertag.toLowerCase()
+              ? '—'
+              : profile.characterName || '—',
+          inline: true,
+        },
         {
           name: 'Specimen Implant',
           value: profile.specimenImplant ? `\`${profile.specimenImplant}\`` : '—',
