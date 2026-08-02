@@ -1,5 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
-const { getGuild } = require('./storage');
+const { getGuild, updateGuild, normalizeGamertag } = require('./storage');
 const {
   isFeatureEnabled,
   isFeatureConfigured,
@@ -24,6 +24,57 @@ function settingsFor(guild) {
     // Kept for storage compat; no UI toggle — default off
     logPasses: Boolean(s.logPasses),
   };
+}
+
+/**
+ * Stable keys for the once-ever checked set.
+ * Prefer normalized Xbox gamertag, then nitrado / platform ids.
+ */
+function gamerscoreCheckKeys(profile) {
+  const keys = [];
+  const gt = normalizeGamertag(profile?.gamertag || '').toLowerCase();
+  if (gt) keys.push(`gt:${gt}`);
+  const nid = profile?.nitradoPlayerId
+    ? String(profile.nitradoPlayerId).trim()
+    : '';
+  if (nid) keys.push(`nid:${nid}`);
+  const pid = profile?.platformId ? String(profile.platformId).trim() : '';
+  if (pid) keys.push(`pid:${pid}`);
+  return keys;
+}
+
+function checkedPlayersMap(guildId) {
+  const guild = getGuild(guildId);
+  const map = guild.gamerscoreDetection?.checkedPlayers;
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+}
+
+function isGamerscoreChecked(guildId, profile) {
+  const map = checkedPlayersMap(guildId);
+  const keys = gamerscoreCheckKeys(profile);
+  if (!keys.length) return false;
+  return keys.some((k) => Boolean(map[k]));
+}
+
+/** Persist that a check attempt completed — never re-check this player. */
+function markGamerscoreChecked(guildId, profile) {
+  const keys = gamerscoreCheckKeys(profile);
+  if (!keys.length) return false;
+  const prev = checkedPlayersMap(guildId);
+  const next = { ...prev };
+  const now = new Date().toISOString();
+  let changed = false;
+  for (const k of keys) {
+    if (!next[k]) {
+      next[k] = now;
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  updateGuild(guildId, {
+    gamerscoreDetection: { checkedPlayers: next },
+  });
+  return true;
 }
 
 function formatBanDuration(minutes) {
@@ -220,6 +271,11 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
     return { skipped: true, reason: 'disabled' };
   }
 
+  // Once-ever: skip OpenXBL + punish + channel spam if already checked.
+  if (isGamerscoreChecked(guildId, profile)) {
+    return { skipped: true, reason: 'already-checked' };
+  }
+
   const settings = settingsFor(guild);
   // OpenXBL must use the Xbox gamertag — never the ARK character / IGN.
   const gamertag = profile?.gamertag
@@ -248,6 +304,8 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
 
   if (!gamertag) {
     console.warn(`[gamerscore] skip — no Xbox gamertag on Nitrado payload`);
+    // Completed attempt (unverifiable) — do not retry forever on rejoin.
+    markGamerscoreChecked(guildId, profile);
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -266,6 +324,7 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
     console.warn(
       `[gamerscore] skip — OPENXBL_API_KEY missing (fail-open) gt=${gamertag}`
     );
+    markGamerscoreChecked(guildId, { ...profile, gamertag });
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -289,6 +348,8 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
   );
 
   if (!lookup.ok || lookup.gamerscore == null || !Number.isFinite(Number(lookup.gamerscore))) {
+    // Fail-open verify failure still counts as a completed check attempt.
+    markGamerscoreChecked(guildId, { ...profile, gamertag });
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -307,6 +368,9 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       error: lookup.error || 'null-score',
     };
   }
+
+  // Score fetched — mark before punish so rejoins never re-hit OpenXBL.
+  markGamerscoreChecked(guildId, { ...profile, gamertag });
 
   const score = Number(lookup.gamerscore);
   const verdict = evaluateThreshold(score, settings.minScore);
@@ -531,4 +595,7 @@ module.exports = {
   formatBanDuration,
   postDetectionLog,
   postSetupReadyEmbed,
+  isGamerscoreChecked,
+  markGamerscoreChecked,
+  gamerscoreCheckKeys,
 };

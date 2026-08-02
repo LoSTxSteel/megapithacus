@@ -31,6 +31,8 @@ function defaultGamerscoreDetection() {
     // Bans are permanent — duration UI removed
     durationMinutes: 0,
     logPasses: false,
+    /** Stable id → ISO timestamp of completed gamerscore check (once ever). */
+    checkedPlayers: {},
   };
 }
 
@@ -297,10 +299,20 @@ function updateGuild(guildId, patch) {
     };
   }
   if (patch.gamerscoreDetection) {
+    const prevChecked =
+      current.gamerscoreDetection?.checkedPlayers &&
+      typeof current.gamerscoreDetection.checkedPlayers === 'object'
+        ? current.gamerscoreDetection.checkedPlayers
+        : {};
+    const patchChecked = patch.gamerscoreDetection.checkedPlayers;
     next.gamerscoreDetection = {
       ...defaultGamerscoreDetection(),
       ...(current.gamerscoreDetection || {}),
       ...patch.gamerscoreDetection,
+      checkedPlayers:
+        patchChecked && typeof patchChecked === 'object'
+          ? patchChecked
+          : prevChecked,
     };
   }
   if (patch.donations) {

@@ -165,6 +165,48 @@ async function listPlayers(serviceId, token) {
 }
 
 /**
+ * True when a games/players entry looks like a real online player.
+ * Filters empty/ghost/offline/spectator junk ASE/Nitrado sometimes leaves in the list.
+ */
+function isValidOnlinePlayerEntry(entry) {
+  if (entry == null) return false;
+  if (typeof entry === 'string') return Boolean(entry.trim());
+  if (typeof entry !== 'object') return false;
+
+  if (entry.online === false || entry.is_online === false || entry.isOnline === false) {
+    return false;
+  }
+  // Explicit spectator / query-only slots are not population.
+  const role = String(entry.role || entry.type || entry.player_type || '').toLowerCase();
+  if (role === 'spectator' || role === 'query' || role === 'reserved') return false;
+  if (entry.spectator === true || entry.is_spectator === true) return false;
+
+  const name = String(
+    entry.name ||
+      entry.username ||
+      entry.gamertag ||
+      entry.gamer_tag ||
+      entry.player_name ||
+      entry.playerName ||
+      entry.online_id ||
+      ''
+  ).trim();
+  if (!name) return false;
+  // Placeholder / anonymous ghosts
+  if (/^(unknown|n\/?a|null|undefined|-)$/i.test(name)) return false;
+  return true;
+}
+
+/**
+ * Count live players from GET …/games/players.
+ * @returns {number|null} null when the list itself is unavailable
+ */
+function countLivePlayers(players) {
+  if (!Array.isArray(players)) return null;
+  return players.filter(isValidOnlinePlayerEntry).length;
+}
+
+/**
  * Add a player identifier to the Nitrado gameserver banlist.
  */
 async function addBanlist(serviceId, token, identifier) {
@@ -709,7 +751,14 @@ async function queryService(server, token, { force = false } = {}) {
   if (auth && isGlobalRateLimited(auth)) {
     const hit = statusResultCache.get(cacheKey);
     if (hit?.result) {
-      return { ...hit.result, cached: true, stale: true, rateLimited: true };
+      // Do not present a stale cached pop as current online count.
+      return {
+        ...hit.result,
+        cached: true,
+        stale: true,
+        rateLimited: true,
+        playersUnknown: true,
+      };
     }
     return {
       ok: false,
@@ -718,13 +767,15 @@ async function queryService(server, token, { force = false } = {}) {
       liveName: null,
       name: server.name,
       map: server.map || server.name,
-      players: 0,
+      players: null,
       maxPlayers: 0,
       status: 'rate_limited',
       online: false,
       error: 'Nitrado rate limited — using cooldown',
       playerNames: [],
       rateLimited: true,
+      playersUnknown: true,
+      stale: true,
     };
   }
 
@@ -736,17 +787,37 @@ async function queryService(server, token, { force = false } = {}) {
 
     const online = isOnline(gameserver.status);
     const maxPlayers = Number(gameserver.slots || gameserver.query?.max_players || 0);
+    const liveCount = countLivePlayers(players);
 
-    let playerCount = 0;
-    if (Array.isArray(players)) {
-      playerCount = players.length;
-    } else if (gameserver.query?.player_current != null) {
-      playerCount = Number(gameserver.query.player_current);
-    } else if (gameserver.query?.players != null) {
-      playerCount = Number(gameserver.query.players);
+    // Prefer live games/players list. Never trust raw player_current alone —
+    // ASE/Nitrado often leaves stale query counts after everyone leaves.
+    let playerCount = null;
+    let playersUnknown = false;
+    if (!online) {
+      playerCount = 0;
+    } else if (liveCount != null) {
+      playerCount = liveCount;
+      // Cross-check: if query claims players but live list is empty, trust live list (0).
+      // If query is lower than a ghost-inflated list we already filtered empties above.
+    } else {
+      // games/players unavailable — do not invent pop from player_current / slots.
+      playersUnknown = true;
+      playerCount = null;
     }
 
     const liveName = extractServerName(gameserver);
+    const playerNames = Array.isArray(players)
+      ? players
+          .filter(isValidOnlinePlayerEntry)
+          .map((p) =>
+            typeof p === 'string'
+              ? p.trim()
+              : p.name || p.username || p.gamertag || p.player_name || ''
+          )
+          .map((n) => String(n).trim())
+          .filter(Boolean)
+      : [];
+
     const result = {
       ok: true,
       id: server.id,
@@ -759,9 +830,10 @@ async function queryService(server, token, { force = false } = {}) {
       status: gameserver.status || 'unknown',
       game: gameserver.game_human || gameserver.game || 'ARK: Survival Evolved',
       online,
-      playerNames: Array.isArray(players)
-        ? players.map((p) => p.name || p.username || p.gamertag || String(p)).filter(Boolean)
-        : [],
+      playerNames: online ? playerNames : [],
+      playersUnknown: online ? playersUnknown : false,
+      stale: false,
+      rateLimited: false,
     };
     statusResultCache.set(cacheKey, {
       result,
@@ -773,7 +845,13 @@ async function queryService(server, token, { force = false } = {}) {
       markRateLimited(server.serviceId, auth);
       const hit = statusResultCache.get(cacheKey);
       if (hit?.result) {
-        return { ...hit.result, cached: true, stale: true, rateLimited: true };
+        return {
+          ...hit.result,
+          cached: true,
+          stale: true,
+          rateLimited: true,
+          playersUnknown: true,
+        };
       }
     }
     return {
@@ -783,12 +861,14 @@ async function queryService(server, token, { force = false } = {}) {
       liveName: null,
       name: server.name,
       map: server.map || server.name,
-      players: 0,
+      players: null,
       maxPlayers: 0,
       status: 'error',
       online: false,
       error: error.message,
       playerNames: [],
+      playersUnknown: true,
+      stale: true,
     };
   }
 }
@@ -808,15 +888,22 @@ async function queryCluster(servers, guild) {
     servers.map((server) => queryService(server, tokenForServer(server, guild)))
   );
   const online = results.filter((r) => r.online);
-  const totalPlayers = results.reduce((sum, r) => sum + r.players, 0);
+  const knownCounts = results.filter(
+    (r) => !r.playersUnknown && Number.isFinite(Number(r.players))
+  );
+  const totalPlayers = knownCounts.reduce((sum, r) => sum + Number(r.players), 0);
   const totalSlots = results.reduce((sum, r) => sum + (r.maxPlayers || 0), 0);
+  const anyUnknown = results.some((r) => r.playersUnknown);
 
   return {
-    results: results.sort((a, b) => b.players - a.players),
+    results: results.sort(
+      (a, b) => (Number(b.players) || 0) - (Number(a.players) || 0)
+    ),
     totalPlayers,
     totalSlots,
     onlineMaps: online.length,
     totalMaps: results.length,
+    playersUnknown: anyUnknown,
   };
 }
 
@@ -2169,6 +2256,8 @@ module.exports = {
   listServices,
   getGameserver,
   listPlayers,
+  isValidOnlinePlayerEntry,
+  countLivePlayers,
   findOnlinePlayer,
   addBanlist,
   removeBanlist,

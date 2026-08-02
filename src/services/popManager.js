@@ -27,17 +27,52 @@ function sanitizeInline(value) {
 
 function formatCount(players, maxPlayers) {
   const max = maxPlayers || '—';
-  return `${players}/${max}`;
+  if (players == null || !Number.isFinite(Number(players))) {
+    return `?/${max}`;
+  }
+  return `${Number(players)}/${max}`;
 }
 
 function formatServerBlock(server) {
-  const icon = server.online ? '🟢' : '🔴';
-  const players = server.online ? Number(server.players) || 0 : 0;
-  const count = formatCount(players, server.maxPlayers);
   const name = sanitizeInline(server.name || 'Server');
+  const unknown =
+    Boolean(server.playersUnknown) ||
+    Boolean(server.rateLimited) ||
+    (server.online &&
+      (server.players == null || !Number.isFinite(Number(server.players))));
 
+  // Offline/stopped → always 0. Rate-limit / failed fetch → unknown (⚪),
+  // optionally last-known with caution — never invent a live pop.
+  if (!server.online && !unknown) {
+    const count = formatCount(0, server.maxPlayers);
+    return [
+      `🔴 \`${name} - ${count}\``,
+      `Population: ${count}`,
+    ].join('\n');
+  }
+
+  if (unknown) {
+    const lastKnown = Number.isFinite(Number(server.players))
+      ? Number(server.players)
+      : null;
+    const count =
+      lastKnown != null
+        ? `~${lastKnown}/${server.maxPlayers || '—'}`
+        : formatCount(null, server.maxPlayers);
+    const caution =
+      lastKnown != null
+        ? 'Population: unknown (last known, may be stale)'
+        : 'Population: unknown';
+    return [
+      `⚪ \`${name} - ${count}\``,
+      caution,
+    ].join('\n');
+  }
+
+  const players = Number(server.players) || 0;
+  const count = formatCount(players, server.maxPlayers);
   return [
-    `${icon} \`${name} - ${count}\``,
+    `🟢 \`${name} - ${count}\``,
     `Population: ${count}`,
   ].join('\n');
 }

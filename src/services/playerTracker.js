@@ -15,7 +15,10 @@ const {
 } = require('./playerDb');
 const { postJoinLeave } = require('./joinLeaveLog');
 const { ensureMapForums, isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
-const { handleGamerscoreJoin } = require('./gamerscoreDetection');
+const {
+  handleGamerscoreJoin,
+  isGamerscoreChecked,
+} = require('./gamerscoreDetection');
 
 const INTERVAL_MS = 10 * 60 * 1000;
 let timer = null;
@@ -97,13 +100,14 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
       }
     }
 
-    // Gamerscore: true joins + bootstrap snapshot (bot restart must still kick
-    // low-score players already online). Never await — OpenXBL can stall polls.
+    // Gamerscore: true joins + bootstrap for never-checked players only.
+    // Once checked (pass/fail/unverifiable), never check again — even on rejoin.
     const shouldCheckGamerscore =
       wantsGamerscore &&
       discordGuild &&
       key &&
-      (isJoin || isBootstrap);
+      (isJoin || isBootstrap) &&
+      !isGamerscoreChecked(guildId, profile);
     if (shouldCheckGamerscore) {
       console.log(
         `[playerTracker] gamerscore queue guild=${guildId} ` +
