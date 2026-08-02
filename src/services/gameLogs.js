@@ -7,7 +7,7 @@ const { brand } = require('../config');
 const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
 /** Matches logBoards scheduler — next-update countdown uses this interval. */
-const LOG_BOARD_INTERVAL_MS = 15 * 60 * 1000;
+const LOG_BOARD_INTERVAL_MS = 30 * 60 * 1000;
 /** Reserve room for `Next update: <t:…:R> (<t:…:t>)` (+ optional fence close). */
 const NEXT_UPDATE_SUFFIX_MAX = 72;
 const DESC_MAX = 4096 - NEXT_UPDATE_SUFFIX_MAX;

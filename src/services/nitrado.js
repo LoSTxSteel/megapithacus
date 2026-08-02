@@ -89,6 +89,9 @@ async function apiRequest(method, path, token, formFields = null, { jsonBody = n
   // Official PHP SDK throws on status===error even when HTTP is 200.
   if (body && typeof body === 'object' && body.status === 'error') {
     const apiMsg = body.message || body?.data?.message || 'Unknown Nitrado error';
+    if (res.status === 429 || /\b429\b|rate.?limit/i.test(String(apiMsg))) {
+      markGlobalRateLimited(token);
+    }
     throw new NitradoError(
       `${apiMsg} (${res.status} ${method} ${path})`,
       res.status || 400
@@ -100,6 +103,9 @@ async function apiRequest(method, path, token, formFields = null, { jsonBody = n
     const msg = apiMsg
       ? `${apiMsg} (${res.status} ${method} ${path})`
       : `Nitrado API ${res.status} ${method} ${path}`;
+    if (res.status === 429) {
+      markGlobalRateLimited(token);
+    }
     throw new NitradoError(msg, res.status);
   }
 
@@ -688,9 +694,40 @@ async function testToken(token) {
 
 /**
  * Query one Nitrado ASE (Microsoft Store / Xbox) service for /pop.
+ * Cached 60–120s so /servermanager hub refreshes do not stampede the API.
  */
-async function queryService(server, token) {
+async function queryService(server, token, { force = false } = {}) {
   const auth = token || server.token;
+  const cacheKey = String(server.serviceId);
+  if (!force) {
+    const hit = statusResultCache.get(cacheKey);
+    if (hit && hit.expiresAt > Date.now()) {
+      return { ...hit.result, cached: true };
+    }
+  }
+
+  if (auth && isGlobalRateLimited(auth)) {
+    const hit = statusResultCache.get(cacheKey);
+    if (hit?.result) {
+      return { ...hit.result, cached: true, stale: true, rateLimited: true };
+    }
+    return {
+      ok: false,
+      id: server.id,
+      serviceId: server.serviceId,
+      liveName: null,
+      name: server.name,
+      map: server.map || server.name,
+      players: 0,
+      maxPlayers: 0,
+      status: 'rate_limited',
+      online: false,
+      error: 'Nitrado rate limited — using cooldown',
+      playerNames: [],
+      rateLimited: true,
+    };
+  }
+
   try {
     const [gameserver, players] = await Promise.all([
       getGameserver(server.serviceId, auth),
@@ -710,7 +747,7 @@ async function queryService(server, token) {
     }
 
     const liveName = extractServerName(gameserver);
-    return {
+    const result = {
       ok: true,
       id: server.id,
       serviceId: server.serviceId,
@@ -726,7 +763,19 @@ async function queryService(server, token) {
         ? players.map((p) => p.name || p.username || p.gamertag || String(p)).filter(Boolean)
         : [],
     };
+    statusResultCache.set(cacheKey, {
+      result,
+      expiresAt: Date.now() + STATUS_CACHE_TTL_MS,
+    });
+    return result;
   } catch (error) {
+    if (is429(error)) {
+      markRateLimited(server.serviceId, auth);
+      const hit = statusResultCache.get(cacheKey);
+      if (hit?.result) {
+        return { ...hit.result, cached: true, stale: true, rateLimited: true };
+      }
+    }
     return {
       ok: false,
       id: server.id,
@@ -914,9 +963,10 @@ const LOG_PATH_CACHE_TTL_MS = 30 * 60 * 1000;
 const LIST_CACHE_TTL_MS = 25 * 60 * 1000;
 const LIST_EMPTY_CACHE_TTL_MS = 2 * 60 * 1000;
 const GAMESERVER_CACHE_TTL_MS = 15 * 60 * 1000;
-/** 429 cooldown: 5m → 10m → 15m cap. */
-const RATE_LIMIT_BASE_MS = 5 * 60 * 1000;
-const RATE_LIMIT_MAX_MS = 15 * 60 * 1000;
+/** Global token/guild cooldown after any 429 — pauses file_server + heavy polls. */
+const GLOBAL_RATE_LIMIT_MS = 25 * 60 * 1000;
+/** Status query cache — stop /servermanager + pop stampede. */
+const STATUS_CACHE_TTL_MS = 90 * 1000;
 /** Cap list attempts per fetch (cached dir first). */
 const MAX_LIST_ATTEMPTS = 3;
 
@@ -926,8 +976,13 @@ const logPathCache = new Map();
 const listCache = new Map();
 /** @type {Map<string, { until: number, failures: number, warned: boolean }>} */
 const rateLimitState = new Map();
+/** token fingerprint → global cooldown (shared across all services on that token). */
+/** @type {Map<string, { until: number, warned: boolean }>} */
+const globalTokenCooldown = new Map();
 /** @type {Map<string, { gameserver: any, expiresAt: number }>} */
 const gameserverCache = new Map();
+/** @type {Map<string, { result: any, expiresAt: number }>} */
+const statusResultCache = new Map();
 /** key → last warn timestamp (cooldown window). */
 const logWarnAt = new Map();
 
@@ -944,34 +999,111 @@ function is429(error) {
   return /\b429\b/.test(String(error.message || ''));
 }
 
-function isRateLimited(serviceId) {
+/** Stable fingerprint — never log the full token. */
+function tokenFingerprint(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
+  return `tk:${t.slice(-20)}`;
+}
+
+function markGlobalRateLimited(token) {
+  const key = tokenFingerprint(token);
+  if (!key) return GLOBAL_RATE_LIMIT_MS;
+  const now = Date.now();
+  const prev = globalTokenCooldown.get(key);
+  const inWindow = prev && now < prev.until;
+  const until = now + GLOBAL_RATE_LIMIT_MS;
+  const mins = Math.round(GLOBAL_RATE_LIMIT_MS / 60000);
+  globalTokenCooldown.set(key, { until, warned: true });
+  if (!(inWindow && prev.warned)) {
+    console.warn(
+      `Nitrado rate limited — pausing file/API polls for ${mins}m`
+    );
+  }
+  return GLOBAL_RATE_LIMIT_MS;
+}
+
+function isGlobalRateLimited(token) {
+  const key = tokenFingerprint(token);
+  if (!key) return false;
+  const st = globalTokenCooldown.get(key);
+  return Boolean(st && Date.now() < st.until);
+}
+
+function getGlobalCooldownRemainingMs(token) {
+  const key = tokenFingerprint(token);
+  if (!key) return 0;
+  const st = globalTokenCooldown.get(key);
+  if (!st) return 0;
+  return Math.max(0, st.until - Date.now());
+}
+
+/** True if any Nitrado token on this guild is in the global 429 cooldown. */
+function isGuildHeavyPollPaused(guild) {
+  if (!guild) return false;
+  const tokens = new Set();
+  for (const account of guild.nitradoAccounts || []) {
+    if (account?.token) tokens.add(account.token);
+  }
+  if (guild.nitradoToken) tokens.add(guild.nitradoToken);
+  for (const server of guild.servers || []) {
+    if (server?.token) tokens.add(server.token);
+  }
+  for (const token of tokens) {
+    if (isGlobalRateLimited(token)) return true;
+  }
+  return false;
+}
+
+function getGuildCooldownRemainingMs(guild) {
+  if (!guild) return 0;
+  let max = 0;
+  const tokens = new Set();
+  for (const account of guild.nitradoAccounts || []) {
+    if (account?.token) tokens.add(account.token);
+  }
+  if (guild.nitradoToken) tokens.add(guild.nitradoToken);
+  for (const server of guild.servers || []) {
+    if (server?.token) tokens.add(server.token);
+  }
+  for (const token of tokens) {
+    max = Math.max(max, getGlobalCooldownRemainingMs(token));
+  }
+  return max;
+}
+
+function isRateLimited(serviceId, token = null) {
+  if (token && isGlobalRateLimited(token)) return true;
   const st = rateLimitState.get(String(serviceId));
   return Boolean(st && Date.now() < st.until);
 }
 
-function markRateLimited(serviceId) {
+/**
+ * Mark a service (+ optional token globally) rate-limited for GLOBAL_RATE_LIMIT_MS.
+ * Any 429 should pause file_server and heavy cluster polls for the whole token.
+ */
+function markRateLimited(serviceId, token = null) {
   const key = String(serviceId);
-  const prev = rateLimitState.get(key);
   const now = Date.now();
-  const inWindow = prev && now < prev.until;
-  // Escalate across cooldowns (5m → 10m → 15m), not within the same window.
-  const failures = Math.min(inWindow ? prev.failures || 1 : (prev?.failures || 0) + 1, 3);
-  const delay = Math.min(
-    RATE_LIMIT_BASE_MS * 2 ** Math.max(0, failures - 1),
-    RATE_LIMIT_MAX_MS
-  );
+  const delay = GLOBAL_RATE_LIMIT_MS;
   const until = now + delay;
-  const alreadyWarned = inWindow && prev.warned;
-  rateLimitState.set(key, { until, failures, warned: true });
-  if (!alreadyWarned) {
-    console.warn(
-      `[nitrado] rate limited (429) serviceId=${key} cooldown=${Math.round(delay / 60000)}m — skipping file_server until then`
+  rateLimitState.set(key, { until, failures: 1, warned: true });
+  if (token) {
+    markGlobalRateLimited(token);
+  } else {
+    const mins = Math.round(delay / 60000);
+    warnLogCooldown(
+      `rl:${key}`,
+      `Nitrado rate limited — pausing file/API polls for ${mins}m`,
+      delay
     );
   }
   return delay;
 }
 
 function clearRateLimit(serviceId) {
+  // Clear per-service only — global token cooldown must expire on its own
+  // so a single success does not re-stampede the rest of the cluster.
   rateLimitState.delete(String(serviceId));
 }
 
@@ -1205,7 +1337,7 @@ async function fetchGameLogText(serviceId, token) {
   let readFailCount = 0;
   let rateLimited = false;
 
-  if (isRateLimited(sid)) {
+  if (isRateLimited(sid, token)) {
     return {
       gameserver: getCachedGameserver(sid) || {},
       text: '',
@@ -1220,7 +1352,7 @@ async function fetchGameLogText(serviceId, token) {
     gameserver = await getGameserverCached(sid, token);
   } catch (error) {
     if (is429(error)) {
-      markRateLimited(sid);
+      markRateLimited(sid, token);
       return {
         gameserver: getCachedGameserver(sid) || {},
         text: '',
@@ -1253,7 +1385,7 @@ async function fetchGameLogText(serviceId, token) {
         }
       } catch (error) {
         if (is429(error)) {
-          markRateLimited(sid);
+          markRateLimited(sid, token);
           return {
             gameserver,
             text: chunks.join('\n'),
@@ -1277,7 +1409,7 @@ async function fetchGameLogText(serviceId, token) {
     // Cached paths went stale — fall through to a capped re-list.
   }
 
-  if (isRateLimited(sid)) {
+  if (isRateLimited(sid, token)) {
     return {
       gameserver,
       text: chunks.join('\n'),
@@ -1294,7 +1426,7 @@ async function fetchGameLogText(serviceId, token) {
       bookmarks = await listFileBookmarks(sid, token);
     } catch (error) {
       if (is429(error)) {
-        markRateLimited(sid);
+        markRateLimited(sid, token);
         return {
           gameserver,
           text: '',
@@ -1331,7 +1463,7 @@ async function fetchGameLogText(serviceId, token) {
       entries = await listFilesCached(sid, token, base);
     } catch (error) {
       if (is429(error)) {
-        markRateLimited(sid);
+        markRateLimited(sid, token);
         rateLimited = true;
         break;
       }
@@ -1370,7 +1502,7 @@ async function fetchGameLogText(serviceId, token) {
         }
       } catch (error) {
         if (is429(error)) {
-          markRateLimited(sid);
+          markRateLimited(sid, token);
           rateLimited = true;
           break;
         }
@@ -1403,7 +1535,7 @@ async function fetchGameLogText(serviceId, token) {
       }
     } catch (error) {
       if (is429(error)) {
-        markRateLimited(sid);
+        markRateLimited(sid, token);
         rateLimited = true;
       }
     }
@@ -1652,7 +1784,7 @@ async function listNitradoBackups(serviceId, token) {
 }
 
 async function resolveSavedArksDir(serviceId, token) {
-  if (isRateLimited(serviceId)) {
+  if (isRateLimited(serviceId, token)) {
     throw new NitradoError(
       `Nitrado file_server rate limited for service ${serviceId}. Try again shortly.`,
       429
@@ -1667,7 +1799,7 @@ async function resolveSavedArksDir(serviceId, token) {
     bookmarks = await listFileBookmarks(serviceId, token);
   } catch (error) {
     if (is429(error)) {
-      markRateLimited(serviceId);
+      markRateLimited(serviceId, token);
       throw error;
     }
   }
@@ -1694,7 +1826,7 @@ async function resolveSavedArksDir(serviceId, token) {
     } catch (error) {
       lastError = error;
       if (is429(error)) {
-        markRateLimited(serviceId);
+        markRateLimited(serviceId, token);
         throw error;
       }
     }
@@ -1777,7 +1909,7 @@ async function listSaves(serviceId, token, { force = false } = {}) {
     saves.push(...nitrado);
   } catch (error) {
     errors.push(`Nitrado backups: ${error.message}`);
-    if (is429(error)) markRateLimited(serviceId);
+    if (is429(error)) markRateLimited(serviceId, token);
   }
 
   try {
@@ -1787,7 +1919,7 @@ async function listSaves(serviceId, token, { force = false } = {}) {
     saves.push(...(past.length ? past : ark.slice(0, 5)));
   } catch (error) {
     errors.push(`SavedArks: ${error.message}`);
-    if (is429(error)) markRateLimited(serviceId);
+    if (is429(error)) markRateLimited(serviceId, token);
   }
 
   // Stable short option values for Discord selects (max 100 chars)
@@ -2079,4 +2211,14 @@ module.exports = {
   getCachedSaveListMeta,
   formatBytes,
   SAVE_FILE_RE,
+  is429,
+  isRateLimited,
+  isGlobalRateLimited,
+  isGuildHeavyPollPaused,
+  getGuildCooldownRemainingMs,
+  getGlobalCooldownRemainingMs,
+  markRateLimited,
+  markGlobalRateLimited,
+  GLOBAL_RATE_LIMIT_MS,
+  STATUS_CACHE_TTL_MS,
 };

@@ -1,5 +1,12 @@
 const { getGuild, listGuildIds } = require('./storage');
-const { listPlayers, getGameserver, tokenForServer, extractMapName } = require('./nitrado');
+const {
+  listPlayers,
+  getGameserver,
+  tokenForServer,
+  extractMapName,
+  isGuildHeavyPollPaused,
+  getGuildCooldownRemainingMs,
+} = require('./nitrado');
 const {
   upsertPlayer,
   markOfflineExcept,
@@ -10,7 +17,7 @@ const { postJoinLeave } = require('./joinLeaveLog');
 const { ensureMapForums, isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const { handleGamerscoreJoin } = require('./gamerscoreDetection');
 
-const INTERVAL_MS = 5 * 60 * 1000;
+const INTERVAL_MS = 10 * 60 * 1000;
 let timer = null;
 
 // serviceId -> Set of profile keys last seen online
@@ -137,6 +144,19 @@ async function scanGuild(client, guildId) {
     return;
   }
 
+  if (isGuildHeavyPollPaused(guild)) {
+    const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
+    const key = `${guildId}:rate_limited`;
+    if (!skipWarned.has(key)) {
+      skipWarned.add(key);
+      console.warn(
+        `Nitrado rate limited — pausing file/API polls for ${mins}m`
+      );
+    }
+    return;
+  }
+  skipWarned.delete(`${guildId}:rate_limited`);
+
   let discordGuild = null;
   const joinLeaveEnabled = isFeatureEnabled(guild, 'joinLeaveLogs');
   const wantsJoinLeave =
@@ -217,7 +237,7 @@ function startPlayerTracker(client) {
     );
   }, INTERVAL_MS);
 
-  console.log('[scheduler] playerTracker started (5m)');
+  console.log('[scheduler] playerTracker started (10m)');
 }
 
 module.exports = {

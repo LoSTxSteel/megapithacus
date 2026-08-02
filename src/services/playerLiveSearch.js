@@ -3,6 +3,9 @@ const {
   getGameserver,
   tokenForServer,
   extractMapName,
+  isGuildHeavyPollPaused,
+  getGuildCooldownRemainingMs,
+  isGlobalRateLimited,
 } = require('./nitrado');
 const {
   upsertPlayer,
@@ -13,14 +16,26 @@ const {
 } = require('./playerDb');
 
 /** Cache full cluster online lists to cut Nitrado player-list spam. */
-const ONLINE_CACHE_TTL_MS = 45 * 1000;
+const ONLINE_CACHE_TTL_MS = 150 * 1000; // 2.5 minutes
 /** Minimum gap between starting a new full cluster scan per guild. */
-const SCAN_COOLDOWN_MS = 12 * 1000;
+const SCAN_COOLDOWN_MS = 45 * 1000;
 
 /** @type {Map<string, { at: number, players: any[], promise?: Promise<any[]> }>} */
 const onlineCache = new Map();
 /** @type {Map<string, number>} */
 const lastScanStartedAt = new Map();
+/** @type {Map<string, number>} */
+const rateLimitWarnAt = new Map();
+
+function warnRateLimitedOnce(guild, windowMs = 10 * 60 * 1000) {
+  const cacheKey = String(guild?.guildId || guild?.id || '_anon');
+  const now = Date.now();
+  const last = rateLimitWarnAt.get(cacheKey) || 0;
+  if (now - last < windowMs) return;
+  rateLimitWarnAt.set(cacheKey, now);
+  const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
+  console.warn(`Nitrado rate limited — pausing file/API polls for ${mins}m`);
+}
 
 function isFakeService(serviceId) {
   return !serviceId || String(serviceId).startsWith('fake');
@@ -87,12 +102,18 @@ async function fetchClusterOnlinePlayersUncached(guild) {
   const servers = guild?.servers || [];
   const online = [];
 
+  // During global 429 cooldown, do not full-scan the cluster.
+  if (isGuildHeavyPollPaused(guild)) {
+    return online;
+  }
+
   await Promise.all(
     servers.map(async (server) => {
       const serviceId = String(server.serviceId || '');
       if (isFakeService(serviceId)) return;
       const token = tokenForServer(server, guild);
       if (!token) return;
+      if (isGlobalRateLimited(token)) return;
 
       let mapName = server.map || server.name || serviceId;
       try {
@@ -144,6 +165,12 @@ async function fetchClusterOnlinePlayers(guild, guildId = null) {
   }
   if (hit?.promise) {
     return hit.promise;
+  }
+
+  // Rate-limited: never start a full cluster scan — serve stale cache / empty.
+  if (isGuildHeavyPollPaused(guild)) {
+    warnRateLimitedOnce(guild);
+    return hit?.players || [];
   }
 
   // Within cooldown and we still have a (slightly stale) list — reuse it.
