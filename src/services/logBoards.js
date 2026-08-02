@@ -94,8 +94,8 @@ async function refreshAdminBoard(client, guildId) {
       'adminLogging',
       serviceId,
       buildMapAdminEmbed(
-        guildFresh.clusterName,
-        mapData.name || server.name,
+        server.name || mapData.name || serviceId,
+        serviceId,
         mapData.admin || [],
         mapData.error || 'OK',
         guildFresh

@@ -66,17 +66,38 @@ function watermarkAuthor() {
 /**
  * Apply Megapithacus branding to any embed:
  * author/footer icons, red colour, watermark, timestamp.
+ *
+ * Options:
+ * - color: override embed accent (number or #hex)
+ * - author: false to omit the brand author line
+ * - footer: string or { text, iconURL? } to replace default footer text
+ * - timestamp: false | Date | number (default: now)
+ * - context / thumbnail: unchanged
  */
 function brandEmbed(embed, guild = null, options = {}) {
   const context = options.context ?? null;
   const icon = getBrandIcon();
 
-  embed.setColor(colorForGuild(guild));
-  embed.setAuthor(watermarkAuthor());
+  const overrideColor = parseEmbedColor(options.color);
+  embed.setColor(overrideColor ?? colorForGuild(guild));
 
-  const footer = { text: footerForGuild(guild, context) };
-  if (icon) footer.iconURL = icon;
-  embed.setFooter(footer);
+  if (options.author !== false) {
+    embed.setAuthor(watermarkAuthor());
+  }
+
+  if (options.footer != null) {
+    const raw =
+      typeof options.footer === 'string' ? options.footer : options.footer?.text;
+    const footer = { text: String(raw ?? '').slice(0, 2048) };
+    const footerIcon =
+      (typeof options.footer === 'object' && options.footer?.iconURL) || icon;
+    if (footerIcon) footer.iconURL = footerIcon;
+    embed.setFooter(footer);
+  } else {
+    const footer = { text: footerForGuild(guild, context) };
+    if (icon) footer.iconURL = icon;
+    embed.setFooter(footer);
+  }
 
   if (options.timestamp === false) {
     /* leave unset */
