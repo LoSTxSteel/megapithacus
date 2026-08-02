@@ -8,8 +8,8 @@ const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
 /** Matches logBoards scheduler — next-update countdown uses this interval. */
 const LOG_BOARD_INTERVAL_MS = 15 * 60 * 1000;
-/** Reserve room for the "Next update: <t:…:R>" suffix (Discord desc max 4096). */
-const NEXT_UPDATE_SUFFIX_MAX = 48;
+/** Reserve room for `Next update: <t:…:R> (<t:…:t>)` (+ optional fence close). */
+const NEXT_UPDATE_SUFFIX_MAX = 72;
 const DESC_MAX = 4096 - NEXT_UPDATE_SUFFIX_MAX;
 
 function isChatBody(body) {
@@ -389,6 +389,10 @@ function sanitizeInlineCode(value) {
 }
 
 function unixFromIso(at) {
+  if (typeof at === 'number' && Number.isFinite(at)) {
+    // Accept ms or already-seconds.
+    return at > 1e11 ? Math.floor(at / 1000) : Math.floor(at);
+  }
   const ms = Date.parse(at);
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : Math.floor(Date.now() / 1000);
 }
@@ -467,15 +471,16 @@ function groupAdminEntries(entries) {
 }
 
 function formatAdminGroup(group) {
-  const ms = Date.parse(group.at);
-  const unix = Number.isFinite(ms) ? Math.floor(ms / 1000) : Math.floor(Date.now() / 1000);
+  // Unix seconds — Discord `<t:>` ignores ms values / shows raw markup.
+  const unix = unixFromIso(group.at);
   const cmds = group.commands.map(sanitizeCodeLine).filter(Boolean);
   if (!cmds.length) cmds.push('(empty)');
 
+  // Timestamp MUST stay outside the code fence or Discord will not render it.
   const fence = cmds.length > 1 ? '```py' : '```';
   return [
-    `🕒 <t:${unix}:R>`,
-    `🛡️ **${escapeMdBold(group.adminName)}**`,
+    `<t:${unix}:R>`,
+    `**${escapeMdBold(group.adminName)}**`,
     `${fence}\n${cmds.join('\n')}\n\`\`\``,
   ].join('\n');
 }
@@ -518,14 +523,20 @@ function nextRefreshUnix(intervalMs = LOG_BOARD_INTERVAL_MS, fromMs = Date.now()
 }
 
 /**
- * Append a live Discord relative countdown. Timestamps only render in
+ * Append a live Discord relative countdown. `<t:…>` only renders in
  * description/fields (not footers), so this goes at the description end.
+ * Also closes any dangling ``` so a truncated admin code block cannot
+ * swallow the timestamp into a fence (where Discord shows raw markup).
  */
 function withNextUpdateCountdown(description, intervalMs = LOG_BOARD_INTERVAL_MS) {
-  const suffix = `\n\nNext update: <t:${nextRefreshUnix(intervalMs)}:R>`;
-  const body = String(description || '');
-  const maxBody = Math.max(0, 4096 - suffix.length);
-  return `${body.slice(0, maxBody)}${suffix}`;
+  const unix = nextRefreshUnix(intervalMs);
+  // Keep both relative + short clock so the Discord timestamp is obvious.
+  const suffix = `\n\nNext update: <t:${unix}:R> (<t:${unix}:t>)`;
+  let body = String(description || '');
+  const fenceCount = (body.match(/```/g) || []).length;
+  const fenceClose = fenceCount % 2 === 1 ? '\n```' : '';
+  const maxBody = Math.max(0, 4096 - fenceClose.length - suffix.length);
+  return `${body.slice(0, maxBody)}${fenceClose}${suffix}`;
 }
 
 /**

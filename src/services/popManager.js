@@ -74,9 +74,9 @@ function buildPopEmbed(guildConfig, cluster) {
       : '_No synced servers._'
     : '_Unable to query servers. Check Server Setup tokens and sync._';
 
-  // Discord relative timestamps only render in description/fields (not footers).
+  // Discord `<t:>` only renders in description/fields (not footers).
   const nextUnix = Math.floor((Date.now() + INTERVAL_MS) / 1000);
-  const suffix = `\n\nNext update: <t:${nextUnix}:R>`;
+  const suffix = `\n\nNext update: <t:${nextUnix}:R> (<t:${nextUnix}:t>)`;
   const description = `${String(body).slice(0, Math.max(0, 4096 - suffix.length))}${suffix}`;
 
   return brandEmbed(

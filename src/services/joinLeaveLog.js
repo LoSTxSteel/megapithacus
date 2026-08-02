@@ -48,7 +48,13 @@ function buildJoinLeaveFooter(serverName, serviceId) {
  */
 function buildJoinLeaveEmbed(guild, { type, profile, serverName, serviceId, at = Date.now() }) {
   const verb = type === 'leave' ? 'left' : 'joined';
-  const unix = Math.floor(Number(at) / 1000) || Math.floor(Date.now() / 1000);
+  // `at` is ms (Date.now / Date#getTime); Discord needs unix seconds.
+  const ms = Number(at);
+  const unix = Number.isFinite(ms) && ms > 1e11
+    ? Math.floor(ms / 1000)
+    : Number.isFinite(ms) && ms > 1e9
+      ? Math.floor(ms)
+      : Math.floor(Date.now() / 1000);
   const line = `<t:${unix}:R> - \`${playerName(profile)}\` ${verb}`;
 
   return brandEmbed(

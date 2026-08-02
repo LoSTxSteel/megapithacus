@@ -160,8 +160,8 @@ async function refreshAdminBoard(client, guildId, precollected = null, guildFres
       admin: [],
       error: 'No data',
     };
-    // Keep last Discord message when rate-limited with stale data.
-    if (mapData.rateLimited && mapData.stale) continue;
+    // Still edit when stale/rate-limited so Next update `<t:…:R>` stays fresh
+    // (skipping left Discord stuck on old plain-text / pre-countdown embeds).
     await editMapFeatureThread(
       discordGuild,
       guildId,
@@ -235,7 +235,7 @@ async function refreshChatBoard(client, guildId, precollected = null, guildFresh
       chat: [],
       error: 'No data',
     };
-    if (mapData.rateLimited && mapData.stale) continue;
+    // Always refresh Discord so countdown timestamps keep updating on 429/stale.
     await editMapFeatureThread(
       discordGuild,
       guildId,
