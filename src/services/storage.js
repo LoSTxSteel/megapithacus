@@ -27,14 +27,9 @@ function writeAll(data) {
 function defaultFeatureSetup() {
   return {
     categoryId: null,
-    popManager: { forumId: null, threadId: null, messageId: null },
+    popManager: { channelId: null, messageId: null },
     banLogging: { forumId: null },
     donationLogging: { forumId: null },
-    donationStats: {
-      channelId: null,
-      lastDailyKey: null,
-      lastMonthlyAt: null,
-    },
     adminLogging: { ready: false },
     chatLogs: { ready: false },
     joinLeaveLogs: { ready: false },
@@ -86,7 +81,6 @@ function defaultGuild() {
       popManager: false,
       banLogging: false,
       donationLogging: false,
-      donationStats: false,
       adminLogging: false,
       chatLogs: false,
       joinLeaveLogs: false,
@@ -140,6 +134,20 @@ function mergeFeatureSetup(current = {}, patch = {}) {
   const merged = { ...defaults, ...current, ...patch };
   for (const key of keys) {
     if (key === 'categoryId') continue;
+
+    // Wholesale replace — shallow merge cannot clear stale map entries on wipe/reset
+    if (key === 'mapForums') {
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'mapForums')) {
+        merged.mapForums = patch.mapForums || {};
+      } else {
+        merged.mapForums = {
+          ...(defaults.mapForums || {}),
+          ...(current.mapForums || {}),
+        };
+      }
+      continue;
+    }
+
     if (
       typeof defaults[key] === 'object' ||
       typeof current[key] === 'object' ||

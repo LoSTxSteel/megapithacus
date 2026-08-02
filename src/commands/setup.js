@@ -65,6 +65,9 @@ module.exports = {
       const createdNames = rebuild.created
         .map((c) => `\`${c.name}\``)
         .join(', ');
+      const warnLines = (rebuild.warnings || [])
+        .slice(0, 4)
+        .map((w) => `• ${w}`);
 
       await interaction.editReply({
         embeds: [
@@ -84,13 +87,18 @@ module.exports = {
               '',
               `**${ADMIN_ROLE_NAME}** is required (with Manage Server / owner) for **start / stop / restart** via Server Management → Server power.`,
               'Assign that role to staff who should control servers and the bot.',
-            ].join('\n')
+              warnLines.length
+                ? `\n**Notes**\n${warnLines.join('\n')}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n')
           ),
           guildEmbed(getGuild(interaction.guildId), 'Next steps', {
             context: 'Hub',
           }).setDescription(
             [
-              '1. `/management` → **Server Setup** — add Nitrado tokens & sync maps',
+              '1. `/management` → **Server Setup** — add Nitrado tokens & **Sync servers** (creates Admin / Chat / Join-Leave forums per map)',
               '2. `/management` → **Server Management** → **Server power** — start / stop / restart',
               '3. `/permissions` — tweak which roles can use Donations, Rewards, Credits, Server power',
               '4. `/rewardmanager` — optional boost thank-yous (credit amount & type)',

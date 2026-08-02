@@ -1,11 +1,6 @@
-const {
-  ChannelType,
-  PermissionFlagsBits,
-  EmbedBuilder,
-} = require('discord.js');
+const { EmbedBuilder } = require('discord.js');
 const { getGuild, updateGuild, listGuildIds } = require('./storage');
 const { getDonations, money, getDonationCurrency } = require('./donations');
-const { ensureCategory } = require('./featureSetup');
 const { brandEmbed } = require('../utils/embeds');
 
 const STATS_CHANNEL_NAME = 'donation-stats';
@@ -189,10 +184,6 @@ function saveStatsState(guildId, patch) {
         ...patch,
       },
     },
-    features: {
-      ...(guild.features || {}),
-      donationStats: true,
-    },
   });
 }
 
@@ -217,73 +208,14 @@ function rememberDaySnapshot(guildId, key, agg) {
   });
 }
 
-async function ensureDonationStatsChannel(discordGuild) {
-  const me = discordGuild.members.me;
-  if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
-    throw new Error(
-      'I need **Manage Channels** to create the donation-stats channel.'
-    );
-  }
-
-  const guildConfig = getGuild(discordGuild.id);
-  const category = await ensureCategory(
-    discordGuild,
-    guildConfig.featureSetup?.categoryId
+/**
+ * Donation-stats channel removed from product setup.
+ * Kept as a stub so older callers fail softly without creating channels.
+ */
+async function ensureDonationStatsChannel(_discordGuild) {
+  throw new Error(
+    'The donation-stats channel is no longer used. Donation logs still work via the donation-logs forum.'
   );
-
-  updateGuild(discordGuild.id, {
-    featureSetup: {
-      ...(getGuild(discordGuild.id).featureSetup || {}),
-      categoryId: category.id,
-    },
-  });
-
-  const state = getStatsState(discordGuild.id);
-  if (state.channelId) {
-    const existing = await discordGuild.channels
-      .fetch(state.channelId)
-      .catch(() => null);
-    if (existing && existing.type === ChannelType.GuildText) {
-      if (!state.lastMonthlyAt) {
-        saveStatsState(discordGuild.id, {
-          channelId: existing.id,
-          lastMonthlyAt: new Date().toISOString(),
-        });
-      }
-      return existing;
-    }
-  }
-
-  const byName = discordGuild.channels.cache.find(
-    (c) =>
-      c.type === ChannelType.GuildText &&
-      c.parentId === category.id &&
-      c.name === STATS_CHANNEL_NAME
-  );
-  if (byName) {
-    const prev = getStatsState(discordGuild.id);
-    saveStatsState(discordGuild.id, {
-      channelId: byName.id,
-      lastMonthlyAt: prev.lastMonthlyAt || new Date().toISOString(),
-    });
-    return byName;
-  }
-
-  const channel = await discordGuild.channels.create({
-    name: STATS_CHANNEL_NAME,
-    type: ChannelType.GuildText,
-    parent: category.id,
-    topic:
-      'Daily donation totals by payment method, trend chart, and monthly reviews.',
-    reason: 'Megapithacus donation stats',
-  });
-
-  saveStatsState(discordGuild.id, {
-    channelId: channel.id,
-    // Start the 30-day monthly clock when the channel is first created
-    lastMonthlyAt: getStatsState(discordGuild.id).lastMonthlyAt || new Date().toISOString(),
-  });
-  return channel;
 }
 
 function buildDailyEmbed(guildId, key, agg, series) {
@@ -415,11 +347,8 @@ async function postMonthlyReview(client, guildId, at = new Date()) {
 }
 
 async function tickGuild(client, guildId) {
-  const guild = getGuild(guildId);
+  // Stats channel feature removed — do not auto-post
   const state = getStatsState(guildId);
-  if (!state.channelId && !guild.features?.donationStats) return;
-
-  // Ensure we only post when a stats channel is configured
   if (!state.channelId) return;
 
   const now = new Date();

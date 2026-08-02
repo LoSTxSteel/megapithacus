@@ -22,7 +22,6 @@ const {
 const { testToken, listAllServicesForGuild } = require('../services/nitrado');
 const {
   FEATURE_META,
-  MAP_FORUM_FEATURES,
   setupFeature,
   ensureMapForums,
   isFeatureEnabled,
@@ -320,7 +319,6 @@ function featureSetupText(guild, key) {
       '• Logging PayPal / Stripe payments detected on the receiving account',
       '• Auto-confirming when money is received via PayPal or Stripe API',
       '• Mark as Delivered when rewards are given',
-      '• **donation-stats** channel — daily totals, trend chart, 30-day reviews',
       '',
       'Created by `/donate` or `/donatemanage`. Configure PayPal/Stripe in `/donatemanage`.',
       !configured
@@ -354,23 +352,34 @@ function featureSetupText(guild, key) {
   }
   if (key === 'popManager') {
     extras.push(`Synced maps: **${(guild.servers || []).length}**`);
-    extras.push(
-      `Live post: ${featureState.threadId ? `<#${featureState.threadId}>` : '_Not created_'}`
-    );
+    const popDest = featureState.channelId || featureState.threadId;
+    extras.push(`Live channel: ${popDest ? `<#${popDest}>` : '_Not created_'}`);
   }
+
+  const destLine = FEATURE_META[key]?.perMap
+    ? `Map forums: **${Object.keys(guild.featureSetup?.mapForums || {}).length}** (named after each map)`
+    : meta.channelName
+      ? `Text channel: ${
+          featureState.channelId || featureState.threadId
+            ? `<#${featureState.channelId || featureState.threadId}>`
+            : '_Not created_'
+        }`
+      : `Log forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`;
+
+  const setupHint = meta.channelName
+    ? `_Press **Setup** to create the Megapithacus category + #${meta.channelName} text channel._`
+    : meta.forumName
+      ? `_Press **Setup** to create the Megapithacus category + ${meta.forumName} forum._`
+      : '_Press **Setup** to create per-map log forums._';
 
   return [
     `Configured: **${configured ? 'Yes' : 'No'}**`,
     `Category: ${category}`,
-    FEATURE_META[key]?.perMap
-      ? `Map forums: **${Object.keys(guild.featureSetup?.mapForums || {}).length}** (named after each map)`
-      : `Log forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
+    destLine,
     ...extras,
     '',
     refresh,
-    !configured
-      ? `_Press **Setup** to create the Megapithacus category + ${meta.forumName} forum._`
-      : '_Ready. Enable to start this feature._',
+    !configured ? setupHint : '_Ready. Enable to start this feature._',
   ]
     .filter(Boolean)
     .join('\n');
@@ -839,17 +848,10 @@ async function handleManagement(interaction) {
 
       if (action === 'sync-servers') {
         const synced = syncServersFromNitrado(guildId, discovered);
-        const guildAfter = getGuild(guildId);
-        const shouldEnsureMapLogs =
-          [...MAP_FORUM_FEATURES].some(
-            (key) =>
-              isFeatureEnabled(guildAfter, key) ||
-              isFeatureConfigured(guildAfter, key)
-          ) ||
-          Object.keys(guildAfter.featureSetup?.mapForums || {}).length > 0;
-
         let mapEnsureNote = '';
-        if (shouldEnsureMapLogs && interaction.guild) {
+
+        // Always repair Admin / Chat / Join-Leave map forums after sync
+        if (interaction.guild && synced.length) {
           try {
             const ensured = await ensureMapForums(
               interaction.guild,
@@ -1003,8 +1005,9 @@ async function handleManagement(interaction) {
         result.discoverErrors?.length
           ? `\n_Note: ${result.discoverErrors.slice(0, 2).join('; ')}_`
           : '';
-      const dest = result.forum
-        ? `→ ${result.forum}`
+      const destChannel = result.channel || result.forum;
+      const dest = destChannel
+        ? `→ ${destChannel}`
         : result.mapCount
           ? '→ per-map forums'
           : '';

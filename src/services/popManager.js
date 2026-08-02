@@ -42,12 +42,15 @@ async function refreshGuildPop(client, guildId) {
   if (!isFeatureEnabled(guildConfig, 'popManager')) return;
   if (!isFeatureConfigured(guildConfig, 'popManager')) return;
 
-  const { threadId, messageId } = guildConfig.featureSetup.popManager;
+  const setup = guildConfig.featureSetup.popManager || {};
+  // Prefer text channel; legacy installs used a forum thread id
+  const channelId = setup.channelId || setup.threadId;
+  const { messageId } = setup;
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
-  if (!discordGuild) return;
+  if (!discordGuild || !channelId) return;
 
-  const thread = await discordGuild.channels.fetch(threadId).catch(() => null);
-  if (!thread) return;
+  const channel = await discordGuild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return;
 
   let cluster = null;
   if ((guildConfig.servers || []).length && (guildConfig.nitradoAccounts || []).length) {
@@ -58,27 +61,27 @@ async function refreshGuildPop(client, guildId) {
 
   try {
     const message = messageId
-      ? await thread.messages.fetch(messageId).catch(() => null)
-      : await thread.fetchStarterMessage().catch(() => null);
+      ? await channel.messages.fetch(messageId).catch(() => null)
+      : null;
 
     if (message) {
       await message.edit({ embeds: [embed] });
-      if (message.id !== messageId) {
+      if (message.id !== messageId || !setup.channelId) {
         updateGuild(guildId, {
           featureSetup: {
             popManager: {
-              ...guildConfig.featureSetup.popManager,
+              channelId: channel.id,
               messageId: message.id,
             },
           },
         });
       }
     } else {
-      const sent = await thread.send({ embeds: [embed] });
+      const sent = await channel.send({ embeds: [embed] });
       updateGuild(guildId, {
         featureSetup: {
           popManager: {
-            ...guildConfig.featureSetup.popManager,
+            channelId: channel.id,
             messageId: sent.id,
           },
         },

@@ -5,8 +5,8 @@ const { brandEmbed } = require('../utils/embeds');
 
 const CATEGORY_NAME = 'Megapithacus';
 
-/** Single live post features (cluster-wide) */
-const LIVE_BOARD_FEATURES = new Set(['popManager']);
+/** Live embed posted in a text channel (cluster-wide) */
+const TEXT_LIVE_FEATURES = new Set(['popManager']);
 
 /**
  * Per-map Discord forums named after the map. Each map forum contains
@@ -38,9 +38,9 @@ const FEATURE_META = {
     key: 'popManager',
     label: 'Pop Manager',
     short: 'Auto-refreshing cluster population embed every 5 minutes',
-    forumName: 'pop-manager',
-    forumTopic: 'Live ASE cluster population — updated every 5 minutes by Megapithacus.',
-    liveThreadName: 'Live Cluster Population',
+    channelName: 'pop-manager',
+    channelTopic:
+      'Live ASE cluster population — updated every 5 minutes by Megapithacus.',
     refreshMinutes: 5,
   },
   banLogging: {
@@ -55,8 +55,7 @@ const FEATURE_META = {
   donationLogging: {
     key: 'donationLogging',
     label: 'Donation Logs',
-    short:
-      'Forum logs for donations + donation-stats channel (daily totals, trend chart, monthly review)',
+    short: 'Forum logs for donations (auto-confirm + Mark as Delivered)',
     forumName: 'donation-logs',
     forumTopic:
       'Donation logs — money received (auto-confirmed) and Mark as Delivered for rewards.',
@@ -147,40 +146,58 @@ async function ensureForum(discordGuild, category, forumName, topic, existingFor
   });
 }
 
-async function ensureLiveBoard(discordGuild, forum, meta, guildConfig) {
-  const existing = guildConfig.featureSetup[meta.key] || {};
-  let threadId = existing.threadId;
-  let messageId = existing.messageId;
-  let thread = threadId
-    ? await discordGuild.channels.fetch(threadId).catch(() => null)
-    : null;
-
-  if (!thread) {
-    const created = await forum.threads.create({
-      name: meta.liveThreadName || meta.label,
-      message: {
-        embeds: [
-          emptyBoardEmbed(
-            meta.liveThreadName || meta.label,
-            meta.short,
-            meta.refreshMinutes
-          ),
-        ],
-      },
-    });
-    const starter = await created.fetchStarterMessage();
-    threadId = created.id;
-    messageId = starter?.id || null;
-  } else if (!messageId) {
-    const starter = await thread.fetchStarterMessage().catch(() => null);
-    messageId = starter?.id || null;
+async function ensureTextChannel(
+  discordGuild,
+  category,
+  channelName,
+  topic,
+  existingChannelId
+) {
+  if (existingChannelId) {
+    const existing = await discordGuild.channels
+      .fetch(existingChannelId)
+      .catch(() => null);
+    if (existing && existing.type === ChannelType.GuildText) {
+      return existing;
+    }
   }
 
-  return {
-    forumId: forum.id,
-    threadId,
-    messageId,
-  };
+  const byName = discordGuild.channels.cache.find(
+    (c) =>
+      c.type === ChannelType.GuildText &&
+      c.parentId === category.id &&
+      c.name === channelName
+  );
+  if (byName) return byName;
+
+  return discordGuild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: category.id,
+    topic,
+    reason: 'Megapithacus feature setup',
+  });
+}
+
+/** Live embed message in a text channel (Pop Manager). */
+async function ensureTextLiveBoard(discordGuild, channel, meta, guildConfig) {
+  const existing = guildConfig.featureSetup[meta.key] || {};
+  let messageId = existing.messageId || null;
+
+  if (messageId) {
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (message) {
+      return { channelId: channel.id, messageId: message.id };
+    }
+  }
+
+  const sent = await channel.send({
+    embeds: [
+      emptyBoardEmbed(meta.label, meta.short, meta.refreshMinutes, guildConfig),
+    ],
+  });
+
+  return { channelId: channel.id, messageId: sent.id };
 }
 
 function threadNameForMap(serverName) {
@@ -294,24 +311,27 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
   });
 
   const soft = Boolean(options.softMaps);
-  let targets = [];
-  let discovered = [];
-  let errors = [];
+  const found = await discoverMapTargets(guildConfig);
+  let targets = found.targets;
+  let discovered = found.discovered;
+  let errors = found.errors;
 
-  if (soft && !(guildConfig.nitradoAccounts || []).length) {
-    errors = [
-      'Map forums skipped — add a Nitrado token and sync maps, then run Setup again.',
-    ];
-  } else {
-    const found = await discoverMapTargets(guildConfig);
-    targets = found.targets;
-    discovered = found.discovered;
-    errors = found.errors;
-    if (!targets.length && !soft) {
+  if (!targets.length) {
+    if (!soft) {
       throw new Error(
         errors[0] ||
           'No Nitrado services found. Add a token in Server Setup and sync servers.'
       );
+    }
+    if (!(guildConfig.nitradoAccounts || []).length) {
+      errors = [
+        'Map forums pending — add a Nitrado token and use Sync servers.',
+        ...errors,
+      ];
+    } else if (!errors.length) {
+      errors = [
+        'Map forums pending — Sync servers to import maps, then forums are created automatically.',
+      ];
     }
   }
 
@@ -383,6 +403,11 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     },
   });
 
+  const mapCount = Object.keys(existing).length;
+  if (mapCount > 0) {
+    markMapLogFeaturesReady(discordGuild.id, true);
+  }
+
   return {
     mapForums: existing,
     targets,
@@ -401,6 +426,19 @@ async function ensureMapForumThreads(discordGuild, _forum, _featureKey, guildCon
     discovered: result.discovered,
     errors: result.errors,
   };
+}
+
+/**
+ * Mark per-map logging features ready when map forums exist.
+ */
+function markMapLogFeaturesReady(guildId, ready = true) {
+  return updateGuild(guildId, {
+    featureSetup: {
+      adminLogging: { ready: Boolean(ready) },
+      chatLogs: { ready: Boolean(ready) },
+      joinLeaveLogs: { ready: Boolean(ready) },
+    },
+  });
 }
 
 /**
@@ -423,6 +461,7 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
   const category = await ensureCategory(discordGuild, guildConfig.featureSetup.categoryId);
 
   let forum = null;
+  let channel = null;
   let featureState = { ...(guildConfig.featureSetup[featureKey] || {}) };
   let setupExtras = {};
 
@@ -441,11 +480,30 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       softMaps: options.softMaps,
     });
 
-    featureState = { ready: true };
+    const mapCount = Object.keys(result.mapForums || {}).length;
+    featureState = { ready: mapCount > 0 };
     setupExtras = {
-      mapCount: Object.keys(result.mapForums || {}).length,
+      mapCount,
       discoverErrors: result.errors || [],
       mapForums: result.mapForums,
+    };
+  } else if (TEXT_LIVE_FEATURES.has(featureKey)) {
+    channel = await ensureTextChannel(
+      discordGuild,
+      category,
+      meta.channelName,
+      meta.channelTopic,
+      guildConfig.featureSetup[featureKey]?.channelId
+    );
+
+    featureState = {
+      ...(await ensureTextLiveBoard(discordGuild, channel, meta, {
+        ...guildConfig,
+        featureSetup: {
+          ...guildConfig.featureSetup,
+          [featureKey]: { channelId: channel.id },
+        },
+      })),
     };
   } else {
     forum = await ensureForum(
@@ -460,19 +518,6 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       ...featureState,
       forumId: forum.id,
     };
-
-    if (LIVE_BOARD_FEATURES.has(featureKey)) {
-      featureState = {
-        ...featureState,
-        ...(await ensureLiveBoard(discordGuild, forum, meta, {
-          ...guildConfig,
-          featureSetup: {
-            ...guildConfig.featureSetup,
-            [featureKey]: featureState,
-          },
-        })),
-      };
-    }
   }
 
   const updated = updateGuild(discordGuild.id, {
@@ -485,6 +530,7 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
   return {
     category,
     forum,
+    channel,
     config: updated,
     meta,
     ...setupExtras,
@@ -500,11 +546,13 @@ function isFeatureConfigured(guild, key) {
     return Boolean(guild.featureSetup?.[key]?.ready);
   }
   const setup = guild.featureSetup?.[key];
-  if (!setup?.forumId) return false;
-  if (LIVE_BOARD_FEATURES.has(key)) {
-    return Boolean(setup.threadId && setup.messageId);
+  if (!setup) return false;
+  if (TEXT_LIVE_FEATURES.has(key)) {
+    // channelId preferred; legacy forum-thread installs used threadId
+    const destId = setup.channelId || setup.threadId;
+    return Boolean(destId && setup.messageId);
   }
-  return true;
+  return Boolean(setup.forumId);
 }
 
 function getMapForumEntry(guild, serviceId) {
@@ -517,8 +565,9 @@ function getMapFeatureThread(guild, serviceId, featureKey) {
 
 const KNOWN_CHANNEL_NAMES = new Set([
   ...Object.values(FEATURE_META)
-    .map((m) => m.forumName)
+    .map((m) => m.forumName || m.channelName)
     .filter(Boolean),
+  // Legacy channel wiped on /setup reset (no longer created)
   'donation-stats',
   'admin-logging',
   'chat-logs',
@@ -526,15 +575,19 @@ const KNOWN_CHANNEL_NAMES = new Set([
 
 module.exports = {
   FEATURE_META,
-  LIVE_BOARD_FEATURES,
+  TEXT_LIVE_FEATURES,
+  /** @deprecated alias — pop manager is a text channel now */
+  LIVE_BOARD_FEATURES: TEXT_LIVE_FEATURES,
   MAP_FORUM_FEATURES,
   MAP_THREAD_SPECS,
   CATEGORY_NAME,
   KNOWN_CHANNEL_NAMES,
   ensureCategory,
+  ensureTextChannel,
   setupFeature,
   ensureMapForums,
   ensureMapForumThreads,
+  markMapLogFeaturesReady,
   discoverMapTargets,
   isFeatureEnabled,
   isFeatureConfigured,

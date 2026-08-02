@@ -20,13 +20,6 @@ async function ensureDonationLogForum(discordGuild) {
       },
     });
   }
-  // Stats channel lives alongside the logs forum
-  try {
-    const { ensureDonationStatsChannel } = require('./donationStats');
-    await ensureDonationStatsChannel(discordGuild);
-  } catch (error) {
-    console.warn('Donation stats channel setup:', error.message);
-  }
   return setup.forum;
 }
 

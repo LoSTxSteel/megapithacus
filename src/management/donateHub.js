@@ -23,11 +23,6 @@ const {
   stripeConfiguredSummary,
 } = require('../services/donations');
 const { ensureDonationLogForum } = require('../services/donationLog');
-const {
-  ensureDonationStatsChannel,
-  postDailyStats,
-  postMonthlyReview,
-} = require('../services/donationStats');
 const { testPayPalConnection } = require('../services/paypal');
 const { syncGuildPayPal } = require('../services/paypalDonations');
 const { testStripeConnection } = require('../services/stripe');
@@ -75,7 +70,6 @@ function buildDonateManagePanel(guildId) {
           'PayPal and Stripe payments on the receiving accounts are detected via API and **auto-confirmed**.',
           'Use **Log money received** below for manual / non-API payments (admin roles only).',
           'Use **Mark as Delivered** on the log when the reward has been given.',
-          '**donation-stats** posts daily method totals + a trend chart, and a monthly review every 30 days.',
           '',
           paypalConfiguredSummary(guildId),
           paypal.clientId
@@ -130,21 +124,6 @@ function buildDonateManagePanel(guildId) {
               label: 'Setup donation logs forum',
               description: 'Create the donation-logs forum',
               value: 'setup-logs',
-            },
-            {
-              label: 'Setup donation stats channel',
-              description: 'Daily totals, chart, and monthly reviews',
-              value: 'setup-stats',
-            },
-            {
-              label: 'Post daily stats now',
-              description: 'Post today’s donation stats immediately',
-              value: 'post-daily',
-            },
-            {
-              label: 'Post monthly review now',
-              description: 'Post a 30-day donation review now',
-              value: 'post-monthly',
             }
           )
       ),
@@ -329,76 +308,14 @@ async function handleDonateHubInteraction(interaction) {
     if (action === 'setup-logs') {
       try {
         const forum = await ensureDonationLogForum(interaction.guild);
-        const stats = await ensureDonationStatsChannel(interaction.guild).catch(
-          () => null
-        );
         await interaction.update({
           ...buildDonateManagePanel(guildId),
-          content: [
-            `Donation logs forum ready: <#${forum.id}>`,
-            stats ? `Donation stats channel: <#${stats.id}>` : null,
-          ]
-            .filter(Boolean)
-            .join('\n'),
+          content: `Donation logs forum ready: <#${forum.id}>`,
         });
       } catch (error) {
         await interaction.update({
           ...buildDonateManagePanel(guildId),
           content: `Could not create forum: ${error.message}`,
-        });
-      }
-      return true;
-    }
-
-    if (action === 'setup-stats') {
-      try {
-        const channel = await ensureDonationStatsChannel(interaction.guild);
-        await interaction.update({
-          ...buildDonateManagePanel(guildId),
-          content: `Donation stats channel ready: <#${channel.id}>\nDaily posts around **23:00 UTC**; monthly review every **30 days**.`,
-        });
-      } catch (error) {
-        await interaction.update({
-          ...buildDonateManagePanel(guildId),
-          content: `Could not create stats channel: ${error.message}`,
-        });
-      }
-      return true;
-    }
-
-    if (action === 'post-daily') {
-      await interaction.deferUpdate();
-      try {
-        const result = await postDailyStats(interaction.client, guildId);
-        await interaction.editReply({
-          ...buildDonateManagePanel(guildId),
-          content: result.ok
-            ? 'Daily donation stats posted to **donation-stats**.'
-            : `Could not post daily stats: ${result.reason}`,
-        });
-      } catch (error) {
-        await interaction.editReply({
-          ...buildDonateManagePanel(guildId),
-          content: `Could not post daily stats: ${error.message}`,
-        });
-      }
-      return true;
-    }
-
-    if (action === 'post-monthly') {
-      await interaction.deferUpdate();
-      try {
-        const result = await postMonthlyReview(interaction.client, guildId);
-        await interaction.editReply({
-          ...buildDonateManagePanel(guildId),
-          content: result.ok
-            ? 'Monthly donation review posted to **donation-stats**.'
-            : `Could not post monthly review: ${result.reason}`,
-        });
-      } catch (error) {
-        await interaction.editReply({
-          ...buildDonateManagePanel(guildId),
-          content: `Could not post monthly review: ${error.message}`,
         });
       }
       return true;

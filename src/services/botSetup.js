@@ -3,8 +3,11 @@ const {
   FEATURE_META,
   CATEGORY_NAME,
   KNOWN_CHANNEL_NAMES,
+  MAP_FORUM_FEATURES,
   ensureCategory,
   setupFeature,
+  ensureMapForums,
+  markMapLogFeaturesReady,
 } = require('./featureSetup');
 const {
   getGuild,
@@ -76,6 +79,7 @@ function collectStoredChannelIds(guildConfig) {
   for (const meta of Object.values(FEATURE_META)) {
     const state = setup[meta.key] || {};
     if (state.forumId) ids.add(String(state.forumId));
+    if (state.channelId) ids.add(String(state.channelId));
     if (state.threadId) ids.add(String(state.threadId));
     for (const entry of Object.values(state.mapThreads || {})) {
       if (entry?.threadId) ids.add(String(entry.threadId));
@@ -89,6 +93,7 @@ function collectStoredChannelIds(guildConfig) {
     }
   }
 
+  // Legacy donation-stats channel (no longer created)
   if (setup.donationStats?.channelId) {
     ids.add(String(setup.donationStats.channelId));
   }
@@ -163,15 +168,19 @@ async function wipeBotChannels(discordGuild, guildConfig) {
     }
   }
 
-  const prevStats = guildConfig.featureSetup?.donationStats || {};
+  // Reset feature setup completely (mapForums must clear — merge replaces when present)
   updateGuild(discordGuild.id, {
     featureSetup: {
       ...defaultFeatureSetup(),
-      donationStats: {
-        channelId: null,
-        lastDailyKey: prevStats.lastDailyKey || null,
-        lastMonthlyAt: prevStats.lastMonthlyAt || null,
-      },
+      mapForums: {},
+    },
+    features: {
+      popManager: false,
+      banLogging: false,
+      donationLogging: false,
+      adminLogging: false,
+      chatLogs: false,
+      joinLeaveLogs: false,
     },
   });
 
@@ -191,26 +200,24 @@ async function rebuildLoggingChannels(discordGuild) {
   });
   created.push({ type: 'category', name: CATEGORY_NAME, id: category.id });
 
-  for (const key of Object.keys(FEATURE_META)) {
+  const nonMapKeys = Object.keys(FEATURE_META).filter(
+    (key) => !MAP_FORUM_FEATURES.has(key)
+  );
+
+  for (const key of nonMapKeys) {
     try {
       const result = await setupFeature(discordGuild, key, { softMaps: true });
-      if (typeof result.mapCount === 'number') {
+      const dest = result.channel || result.forum;
+      if (dest) {
         created.push({
-          type: 'maps',
-          name: `${result.mapCount} map forum(s) · ${result.meta.label}`,
-          id: category.id,
+          type: result.channel ? 'text' : 'forum',
+          name:
+            result.meta.channelName ||
+            result.meta.forumName ||
+            result.meta.label,
+          id: dest.id,
           key,
         });
-      } else if (result.forum) {
-        created.push({
-          type: 'forum',
-          name: result.meta.forumName,
-          id: result.forum.id,
-          key,
-        });
-      }
-      if (result.discoverErrors?.length) {
-        warnings.push(...result.discoverErrors.map((e) => `${result.meta.label}: ${e}`));
       }
       updateGuild(discordGuild.id, {
         features: {
@@ -223,19 +230,40 @@ async function rebuildLoggingChannels(discordGuild) {
     }
   }
 
+  // Create per-map Admin / Chat / Join-Leave forums once (soft if no tokens yet)
   try {
-    const { ensureDonationStatsChannel } = require('./donationStats');
-    const stats = await ensureDonationStatsChannel(discordGuild);
-    created.push({ type: 'text', name: 'donation-stats', id: stats.id });
+    const result = await ensureMapForums(discordGuild, getGuild(discordGuild.id), {
+      softMaps: true,
+    });
+    const mapCount = Object.keys(result.mapForums || {}).length;
+    const ready = mapCount > 0;
+    markMapLogFeaturesReady(discordGuild.id, ready);
     updateGuild(discordGuild.id, {
       features: {
         ...(getGuild(discordGuild.id).features || {}),
-        donationLogging: true,
-        donationStats: true,
+        adminLogging: true,
+        chatLogs: true,
+        joinLeaveLogs: true,
       },
     });
+    created.push({
+      type: 'maps',
+      name: ready
+        ? `${mapCount} map forum(s) · Admin / Chat / Join-Leave`
+        : 'map forums (pending Nitrado sync)',
+      id: category.id,
+      key: 'mapLogs',
+    });
+    if (result.errors?.length) {
+      warnings.push(...result.errors);
+    }
+    if (!ready) {
+      warnings.push(
+        'Map log forums will be created when you Sync servers (Server Setup).'
+      );
+    }
   } catch (error) {
-    warnings.push(`Donation stats: ${error.message}`);
+    warnings.push(`Map logs: ${error.message}`);
   }
 
   return { category, created, warnings };
