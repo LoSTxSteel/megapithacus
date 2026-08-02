@@ -12,8 +12,22 @@ const JOIN_COLOR = 0x2ecc71;
 const LEAVE_COLOR = 0xe74c3c;
 
 function playerName(profile) {
-  const raw = profile?.characterName || profile?.gamertag || 'Unknown';
-  return String(raw).replace(/`/g, '').slice(0, 64) || 'Unknown';
+  const gt = String(profile?.gamertag || '')
+    .replace(/`/g, '')
+    .trim();
+  const char = String(profile?.characterName || '')
+    .replace(/`/g, '')
+    .trim();
+  const distinctChar =
+    char && (!gt || char.toLowerCase() !== gt.toLowerCase()) ? char : '';
+  // Prefer "IGN (gamertag)" when we have a real character name; never pretend
+  // the gamertag is the in-game name when they are the same field.
+  if (distinctChar && gt) {
+    return `${distinctChar.slice(0, 40)} (${gt.slice(0, 32)})`.slice(0, 64);
+  }
+  if (distinctChar) return distinctChar.slice(0, 64);
+  if (gt) return gt.slice(0, 64);
+  return 'Unknown';
 }
 
 function formatFooterStamp(date = new Date()) {

@@ -103,10 +103,10 @@ const FEATURE_META = {
     key: 'gamerscoreDetection',
     label: 'Gamerscore Detection',
     short:
-      'Check Xbox gamerscore on map join — kick/ban below minimum; logs to #gamerscore-detection',
+      'Check Xbox gamerscore on map join — kick or permanent ban below minimum; logs to #gamerscore-detection',
     channelName: 'gamerscore-detection',
     channelTopic:
-      'Xbox gamerscore join checks — passes, fails, and verify errors from Megapithacus.',
+      'Xbox gamerscore join checks — fails and verify errors from Megapithacus.',
     refreshMinutes: null,
   },
 };

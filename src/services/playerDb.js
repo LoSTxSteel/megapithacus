@@ -151,6 +151,15 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
       profile.characterName = char;
     }
   }
+  // Clear legacy rows where characterName was copied from gamertag
+  if (
+    profile.characterName &&
+    profile.gamertag &&
+    String(profile.characterName).trim().toLowerCase() ===
+      String(profile.gamertag).trim().toLowerCase()
+  ) {
+    profile.characterName = null;
+  }
   if (incoming.specimenImplant && looksLikeSpecimenImplant(incoming.specimenImplant)) {
     profile.specimenImplant = String(incoming.specimenImplant).trim();
   }
@@ -250,6 +259,26 @@ function getPlayerById(guildId, id) {
   return getGuildPlayers(guildId).find((p) => p.id === id) || null;
 }
 
+function flattenPlayerRaw(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const nested = [raw.player, raw.info, raw.data, raw.attributes, raw.details]
+    .filter((v) => v && typeof v === 'object' && !Array.isArray(v));
+  // Nested first, top-level wins (spread order)
+  return Object.assign({}, ...nested, raw);
+}
+
+function namesEqual(a, b) {
+  if (a == null || b == null) return false;
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
+function distinctFrom(value, gamertag) {
+  const v = value != null ? String(value).trim() : '';
+  if (!v) return null;
+  if (gamertag && namesEqual(v, gamertag)) return null;
+  return v;
+}
+
 /**
  * Normalize a Nitrado / gameserver player payload into our profile shape.
  *
@@ -257,10 +286,12 @@ function getPlayerById(guildId, id) {
  *   { name, id, id_type, online, actions, … }
  * - `id` is Nitrado's internal kick/ban action id — NOT the specimen implant.
  * - Specimen / UE4 PlayerDataID is often in `id2` (when present) or explicit fields.
- * - Xbox: `name` is usually the gamertag; character/IGN may be `username`,
- *   `playerName`, `characterName`, etc. Never copy gamertag into characterName.
+ * - Xbox arkxb: `name` is almost always the Xbox gamertag. Distinct character /
+ *   IGN is rarely on this endpoint — often only in game chat logs as
+ *   `Gamertag (CharacterName): message`. Never copy gamertag into characterName.
  */
-function normalizeOnlinePlayer(raw, { map, serviceId }) {
+function normalizeOnlinePlayer(rawInput, { map, serviceId }) {
+  const raw = flattenPlayerRaw(rawInput);
   const asText = (...values) => {
     const v = firstTruthy(...values);
     return v != null ? String(v).trim() : null;
@@ -273,61 +304,62 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
     raw.xbox_gamertag,
     raw.xboxGamertag,
     raw.platform_name,
-    raw.platformName
+    raw.platformName,
+    raw.platform_profile_name,
+    raw.PlatformProfileName,
+    raw.online_id,
+    raw.onlineId
   );
 
-  // Explicit character / survivor / IGN fields.
+  // Explicit survivor / IGN fields only (NOT player_name — that is platform id in ARK).
   let characterName = asText(
     raw.character_name,
     raw.characterName,
-    raw.player_name,
-    raw.playerName,
     raw.survivor_name,
     raw.survivorName,
     raw.ign,
     raw.char_name,
-    raw.charName
+    raw.charName,
+    raw.character,
+    raw.charname
   );
 
   const name = asText(raw.name);
   const username = asText(raw.username, raw.user_name, raw.userName);
+  // ARK / Nitrado often use player_name for the platform gamertag — only use as
+  // character when it is clearly distinct from the resolved gamertag later.
+  const playerNameField = asText(raw.player_name, raw.playerName);
 
   // ASE Xbox: `name` is the Xbox gamertag when no explicit tag is present.
   if (!gamertag && name) {
     gamertag = name;
   }
 
-  // Only use username as gamertag when nothing else identifies the Xbox account
-  // and we already have a distinct character name (or no character at all).
-  if (!gamertag && username) {
-    if (
-      !characterName ||
-      characterName.toLowerCase() !== username.toLowerCase()
-    ) {
-      // If username looks like the only identity field, keep as gamertag.
-      if (!characterName) gamertag = username;
-    }
+  // player_name as platform id when still missing a gamertag
+  if (!gamertag && playerNameField) {
+    gamertag = playerNameField;
   }
 
-  // Prefer username / name as character when they differ from gamertag.
-  if (
-    !characterName &&
-    username &&
-    gamertag &&
-    username.toLowerCase() !== gamertag.toLowerCase()
-  ) {
-    characterName = username;
+  // Only use username as gamertag when nothing else identifies the Xbox account.
+  if (!gamertag && username && !characterName) {
+    gamertag = username;
   }
-  if (
-    !characterName &&
-    name &&
-    gamertag &&
-    name.toLowerCase() !== gamertag.toLowerCase()
-  ) {
+
+  // Prefer username as character when it differs from gamertag.
+  if (!characterName) {
+    characterName = distinctFrom(username, gamertag);
+  }
+  // If name was not used as gamertag (explicit tag differed), it may be IGN.
+  if (!characterName && name && gamertag && !namesEqual(name, gamertag)) {
     characterName = name;
   }
+  // player_name only as IGN when distinct from gamertag
+  if (!characterName) {
+    characterName = distinctFrom(playerNameField, gamertag);
+  }
 
-  // Do NOT fall back characterName → gamertag (that made In-game name wrong).
+  // Final guard — never return gamertag echo as characterName
+  characterName = distinctFrom(characterName, gamertag);
 
   const nitradoPlayerId = firstTruthy(raw.id);
   const idType = String(raw.id_type || raw.idType || '').toLowerCase();
@@ -343,9 +375,12 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
     raw.player_data_id,
     raw.PlayerDataID,
     raw.id2,
-    raw.player_id,
-    raw.playerId,
   ];
+  // Only accept player_id as implant when it looks like UE4 PlayerDataID,
+  // never when id_type marks the primary id as name/gamertag.
+  if (idType !== 'name' && idType !== 'gamertag') {
+    specimenCandidates.push(raw.player_id, raw.playerId);
+  }
   let specimenImplant = null;
   for (const candidate of specimenCandidates) {
     if (looksLikeSpecimenImplant(candidate)) {
@@ -367,6 +402,7 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
     !platformId &&
     nitradoPlayerId &&
     idType !== 'internal' &&
+    idType !== 'name' &&
     /^\d{15,}$/.test(String(nitradoPlayerId).trim())
   ) {
     platformId = String(nitradoPlayerId).trim();
@@ -388,8 +424,81 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
     serviceId: serviceId ? String(serviceId) : null,
     platform: 'Microsoft Store',
     online: true,
-    raw,
+    raw: rawInput,
   };
+}
+
+function looksLikeTribeLabel(value) {
+  const s = String(value || '').trim();
+  if (!s) return true;
+  if (/^tribe\s+of\b/i.test(s)) return true;
+  if (/\btribe\b/i.test(s) && s.length > 48) return true;
+  return false;
+}
+
+/**
+ * Enrich stored profiles with in-game character names from ASE chat lines.
+ * Xbox / arkxb chat commonly looks like: `Gamertag (CharacterName): message`
+ * When the left side matches a known gamertag, the parentheses value is IGN
+ * (unless it looks like a tribe label).
+ *
+ * @returns {number} profiles updated
+ */
+function enrichPlayersFromChatLogs(guildId, chatEntries, { serviceId, map } = {}) {
+  if (!guildId || !Array.isArray(chatEntries) || !chatEntries.length) return 0;
+
+  const byGamertag = new Map();
+  for (const entry of chatEntries) {
+    const gt = String(entry?.playerName || '').trim();
+    const maybeChar = String(entry?.tribeOrChar || '').trim();
+    if (!gt || !maybeChar) continue;
+    if (namesEqual(gt, maybeChar)) continue;
+    if (looksLikeTribeLabel(maybeChar)) continue;
+    // Prefer the most recent non-empty IGN per gamertag
+    byGamertag.set(gt.toLowerCase(), maybeChar.slice(0, 64));
+  }
+
+  if (!byGamertag.size) return 0;
+
+  let updated = 0;
+  for (const [gtKey, characterName] of byGamertag) {
+    const profiles = getGuildPlayers(guildId);
+    const match = profiles.find(
+      (p) => p.gamertag && String(p.gamertag).trim().toLowerCase() === gtKey
+    );
+    if (!match) {
+      // Create a lightweight profile so later joins keep the IGN
+      upsertPlayer(guildId, {
+        gamertag: chatEntries.find(
+          (e) => String(e.playerName || '').trim().toLowerCase() === gtKey
+        )?.playerName,
+        characterName,
+        map: map || null,
+        serviceId: serviceId ? String(serviceId) : null,
+        online: false,
+      });
+      updated += 1;
+      continue;
+    }
+    if (
+      match.characterName &&
+      namesEqual(match.characterName, characterName)
+    ) {
+      continue;
+    }
+    upsertPlayer(guildId, {
+      gamertag: match.gamertag,
+      characterName,
+      specimenImplant: match.specimenImplant,
+      nitradoPlayerId: match.nitradoPlayerId,
+      platformId: match.platformId,
+      map: map || match.map,
+      serviceId: serviceId || match.serviceId,
+      online: match.online,
+    });
+    updated += 1;
+  }
+  return updated;
 }
 
 module.exports = {
@@ -399,6 +508,9 @@ module.exports = {
   searchPlayers,
   getPlayerById,
   normalizeOnlinePlayer,
+  enrichPlayersFromChatLogs,
   profileKey,
   looksLikeSpecimenImplant,
+  namesEqual,
+  distinctFrom,
 };

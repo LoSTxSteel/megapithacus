@@ -19,7 +19,9 @@ function settingsFor(guild) {
   return {
     minScore: Math.max(0, Number(s.minScore) || 0),
     punishment: s.punishment === 'ban' ? 'ban' : 'kick',
-    durationMinutes: Math.max(0, Number(s.durationMinutes) || 0),
+    // Bans are always permanent (duration UI removed)
+    durationMinutes: 0,
+    // Kept for storage compat; no UI toggle — default off
     logPasses: Boolean(s.logPasses),
   };
 }
@@ -40,21 +42,14 @@ function formatBanDuration(minutes) {
 }
 
 function punishmentSummary(settings) {
-  if (settings.punishment === 'ban') {
-    const duration = formatBanDuration(settings.durationMinutes);
-    return duration ? `temp ban (${duration})` : 'permanent ban';
-  }
+  if (settings.punishment === 'ban') return 'permanent ban';
   return 'kick';
 }
 
 /** Member-facing explanation of when / how long punishment applies. */
 function punishmentTimingText(settings) {
   if (settings.punishment === 'ban') {
-    const duration = formatBanDuration(settings.durationMinutes);
-    if (!duration) {
-      return 'Players below the minimum will be **permanently banned** when they join a map.';
-    }
-    return `Players below the minimum will be **banned for ${duration}** when they join a map.`;
+    return 'Players below the minimum will be **permanently banned** when they join a map.';
   }
   return 'Players below the minimum will be **kicked immediately** when they join a map.';
 }

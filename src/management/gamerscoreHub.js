@@ -59,15 +59,14 @@ function settingsSummary(guildId) {
     `Log channel: ${channelId ? `<#${channelId}>` : '_not created_'}`,
     `Minimum gamerscore: \`${settings.minScore}\``,
     `Punishment: **${punishmentSummary(settings)}**`,
-    `Log passes: **${settings.logPasses ? 'yes' : 'no'}**`,
   ].join('\n');
 }
 
 function setupInstructions() {
   return [
     '**Setup**',
-    '1. Enable & set up **Gamerscore Detection** here or in `/management` → Feature Management (creates `#gamerscore-detection`).',
-    '2. Configure minimum score and punishment below.',
+    '1. Use **Enable feature** here (creates `#gamerscore-detection` if needed), or finish setup in `/management` → Feature Management.',
+    '2. Set minimum score and punishment (kick or permanent ban) below.',
   ].join('\n');
 }
 
@@ -79,7 +78,7 @@ function buildGamerscoreManagerMessage(guildId, { content = null } = {}) {
         context: 'Gamerscore detection',
       }).setDescription(
         [
-          'Check Xbox gamerscore when players join a map. Low scores can be kicked or banned.',
+          'Check Xbox gamerscore when players join a map. Low scores can be kicked or permanently banned.',
           '',
           settingsSummary(guildId),
           '',
@@ -101,34 +100,14 @@ function buildGamerscoreManagerMessage(guildId, { content = null } = {}) {
               value: 'enable',
             },
             {
-              label: 'Disable feature',
-              description: 'Stop join gamerscore checks',
-              value: 'disable',
-            },
-            {
-              label: 'Run channel setup',
-              description: 'Create/repair #gamerscore-detection',
-              value: 'setup',
-            },
-            {
               label: 'Set minimum gamerscore',
               description: 'Players below this are punished',
               value: 'set-min',
             },
             {
               label: 'Set punishment type',
-              description: 'Kick or ban (temp / permanent)',
+              description: 'Kick or permanent ban',
               value: 'set-punishment',
-            },
-            {
-              label: 'Set ban duration (minutes)',
-              description: '0 = permanent ban; ignored for kick',
-              value: 'set-duration',
-            },
-            {
-              label: 'Toggle log passes',
-              description: 'Also log players who meet the minimum',
-              value: 'toggle-passes',
             }
           )
       ),
@@ -206,47 +185,6 @@ async function handleGamerscoreManagerInteraction(interaction) {
       return true;
     }
 
-    if (action === 'disable') {
-      updateGuild(guildId, { features: { gamerscoreDetection: false } });
-      await interaction.update(
-        buildGamerscoreManagerMessage(guildId, {
-          content: 'Gamerscore detection disabled.',
-        })
-      );
-      return true;
-    }
-
-    if (action === 'setup') {
-      await interaction.deferUpdate();
-      try {
-        const result = await setupFeature(
-          interaction.guild,
-          'gamerscoreDetection'
-        );
-        await postSetupReadyEmbed(interaction.guild, guildId).catch((err) =>
-          console.warn('Gamerscore setup embed failed:', err.message)
-        );
-        const settings = settingsFor(getGuild(guildId));
-        const dest = result.channel ? `→ ${result.channel}` : '';
-        await interaction.editReply(
-          buildGamerscoreManagerMessage(guildId, {
-            content: [
-              `Setup complete ${dest}`,
-              `Minimum \`${settings.minScore}\` · Punishment: **${punishmentSummary(settings)}**`,
-              'Posted a ready embed in the detection channel.',
-            ].join('\n'),
-          })
-        );
-      } catch (error) {
-        await interaction.editReply(
-          buildGamerscoreManagerMessage(guildId, {
-            content: `Setup failed: ${error.message}`,
-          })
-        );
-      }
-      return true;
-    }
-
     if (action === 'set-min') {
       const current = settingsFor(guild).minScore;
       await interaction.showModal(
@@ -261,20 +199,6 @@ async function handleGamerscoreManagerInteraction(interaction) {
       return true;
     }
 
-    if (action === 'set-duration') {
-      const current = settingsFor(guild).durationMinutes;
-      await interaction.showModal(
-        numberModal(
-          'gscorehub:modal:duration',
-          'Ban duration (minutes)',
-          'Minutes (0 = permanent ban)',
-          current,
-          'e.g. 60'
-        )
-      );
-      return true;
-    }
-
     if (action === 'set-punishment') {
       const current = settingsFor(guild).punishment;
       await interaction.update({
@@ -284,7 +208,7 @@ async function handleGamerscoreManagerInteraction(interaction) {
           }).setDescription(
             [
               `Currently: **${current}**`,
-              'Kick removes the player from the map. Ban uses the cluster banlist (temp or permanent).',
+              'Kick removes the player from the map. Ban adds a **permanent** cluster banlist entry.',
             ].join('\n')
           ),
         ],
@@ -301,7 +225,7 @@ async function handleGamerscoreManagerInteraction(interaction) {
                 },
                 {
                   label: 'Ban',
-                  description: 'Temp or permanent via ban duration setting',
+                  description: 'Permanent ban via cluster banlist',
                   value: 'ban',
                 }
               )
@@ -312,24 +236,17 @@ async function handleGamerscoreManagerInteraction(interaction) {
       });
       return true;
     }
-
-    if (action === 'toggle-passes') {
-      const settings = settingsFor(guild);
-      updateGuild(guildId, {
-        gamerscoreDetection: { logPasses: !settings.logPasses },
-      });
-      await interaction.update(
-        buildGamerscoreManagerMessage(guildId, {
-          content: `Log passes is now **${!settings.logPasses ? 'on' : 'off'}**.`,
-        })
-      );
-      return true;
-    }
   }
 
   if (interaction.isStringSelectMenu() && id === 'gscorehub:punishment') {
     const punishment = interaction.values[0] === 'ban' ? 'ban' : 'kick';
-    updateGuild(guildId, { gamerscoreDetection: { punishment } });
+    updateGuild(guildId, {
+      gamerscoreDetection: {
+        punishment,
+        // Bans are permanent — duration UI removed
+        ...(punishment === 'ban' ? { durationMinutes: 0 } : {}),
+      },
+    });
     await interaction.update(
       buildGamerscoreManagerMessage(guildId, {
         content: `Punishment set to **${punishment}**.`,
@@ -356,35 +273,6 @@ async function handleGamerscoreManagerInteraction(interaction) {
     await interaction.reply({
       ...buildGamerscoreManagerMessage(guildId, {
         content: `Minimum gamerscore set to \`${Math.floor(value)}\`.`,
-      }),
-      ephemeral: true,
-    });
-    return true;
-  }
-
-  if (interaction.isModalSubmit() && id === 'gscorehub:modal:duration') {
-    const raw = interaction.fields.getTextInputValue('value');
-    const value = Number(String(raw).trim());
-    if (!Number.isFinite(value) || value < 0 || value > 525600) {
-      await interaction.reply({
-        embeds: [
-          errorEmbed(
-            'Enter minutes as a number from 0 (permanent) to 525600 (1 year).'
-          ),
-        ],
-        ephemeral: true,
-      });
-      return true;
-    }
-    updateGuild(guildId, {
-      gamerscoreDetection: { durationMinutes: Math.floor(value) },
-    });
-    await interaction.reply({
-      ...buildGamerscoreManagerMessage(guildId, {
-        content:
-          Math.floor(value) === 0
-            ? 'Ban duration set to **permanent** (0 minutes).'
-            : `Ban duration set to **${Math.floor(value)}** minutes.`,
       }),
       ephemeral: true,
     });

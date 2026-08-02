@@ -135,7 +135,7 @@ async function refreshAdminBoard(client, guildId) {
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
-      ? await collectPerMapLogs(guildFresh)
+      ? await collectPerMapLogs(guildFresh, guildId)
       : { byMap: {}, errors: ['Add Nitrado token first'] };
 
   if (collected.errors?.length) {
@@ -201,7 +201,7 @@ async function refreshChatBoard(client, guildId) {
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
-      ? await collectPerMapLogs(guildFresh)
+      ? await collectPerMapLogs(guildFresh, guildId)
       : { byMap: {}, errors: ['Add Nitrado token first'] };
 
   if (collected.errors?.length) {

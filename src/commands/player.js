@@ -108,7 +108,13 @@ function profileEmbed(profile, guildId) {
   const guild = guildId ? getGuild(guildId) : null;
   const embed = brandEmbed(
     new EmbedBuilder()
-      .setTitle(profile.characterName || profile.gamertag || 'Unknown player')
+      .setTitle(
+        profile.characterName &&
+          profile.gamertag &&
+          profile.characterName.toLowerCase() !== profile.gamertag.toLowerCase()
+          ? profile.characterName
+          : profile.gamertag || profile.characterName || 'Unknown player'
+      )
       .setDescription(
         profile.notes === 'FAKE_TEST_PROFILE'
           ? '_Fake test profile for Megapithacus development._'
@@ -214,16 +220,22 @@ function resultsPicker(results) {
       .setCustomId('player:pick')
       .setPlaceholder('Select a player to view')
       .addOptions(
-        results.slice(0, 25).map((p) => ({
-          label: `${p.online ? '🟢' : '⚫'} ${(p.characterName || p.gamertag || 'Unknown').slice(0, 90)}`.slice(
-            0,
-            100
-          ),
-          description: `${p.gamertag || '—'} · ${
-            p.online ? p.map || 'Online' : 'Offline'
-          }`.slice(0, 100),
-          value: p.id,
-        }))
+        results.slice(0, 25).map((p) => {
+          const gt = p.gamertag || '';
+          const ign =
+            p.characterName &&
+            (!gt || p.characterName.toLowerCase() !== gt.toLowerCase())
+              ? p.characterName
+              : '';
+          const title = ign || gt || 'Unknown';
+          return {
+            label: `${p.online ? '🟢' : '⚫'} ${title}`.slice(0, 100),
+            description: `${gt || '—'} · ${
+              p.online ? p.map || 'Online' : 'Offline'
+            }`.slice(0, 100),
+            value: p.id,
+          };
+        })
       )
   );
 }
@@ -289,11 +301,15 @@ async function executeSearch(interaction) {
     .map((p, i) => {
       const punish = punishmentSummary(guildId, p);
       const punishBit = punish ? ` · ⚠ ${punish}` : '';
-      return `**${i + 1}.** ${p.characterName || 'Unknown'} · \`${
-        p.gamertag || '—'
-      }\` · implant \`${p.specimenImplant || '—'}\` · ${
-        p.tribeName || 'No tribe'
-      }${statusBit(p)}${punishBit}`;
+      const ign =
+        p.characterName &&
+        (!p.gamertag ||
+          p.characterName.toLowerCase() !== p.gamertag.toLowerCase())
+          ? p.characterName
+          : '—';
+      return `**${i + 1}.** ${ign} · \`${p.gamertag || '—'}\` · implant \`${
+        p.specimenImplant || '—'
+      }\` · ${p.tribeName || 'No tribe'}${statusBit(p)}${punishBit}`;
     })
     .join('\n');
 

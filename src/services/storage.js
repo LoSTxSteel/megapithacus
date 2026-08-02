@@ -28,7 +28,8 @@ function defaultGamerscoreDetection() {
   return {
     minScore: 0,
     punishment: 'kick',
-    durationMinutes: 60,
+    // Bans are permanent — duration UI removed
+    durationMinutes: 0,
     logPasses: false,
   };
 }

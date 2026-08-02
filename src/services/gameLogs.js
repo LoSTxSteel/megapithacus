@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { fetchGameLogText, tokenForServer, extractMapName } = require('./nitrado');
+const { enrichPlayersFromChatLogs } = require('./playerDb');
 const { brandEmbed } = require('../utils/embeds');
 const { brand } = require('../config');
 
@@ -232,9 +233,11 @@ function parseLogText(text, mapName, serviceId) {
 
 /**
  * Collect per-map chat + in-game admin lines from Nitrado.
+ * When guildId is provided, also enrich player profiles with IGNs from chat
+ * (`Gamertag (CharacterName): message` on ASE Xbox).
  * @returns {{ byMap: Record<string, { name, chat, admin, error? }>, errors: string[] }}
  */
-async function collectPerMapLogs(guild) {
+async function collectPerMapLogs(guild, guildId = null) {
   const byMap = {};
   const errors = [];
 
@@ -266,6 +269,18 @@ async function collectPerMapLogs(guild) {
         admin: parsed.admin.slice(-40),
         logFiles: logFiles || [],
       };
+
+      if (guildId && parsed.chat.length) {
+        const n = enrichPlayersFromChatLogs(guildId, parsed.chat, {
+          serviceId,
+          map: mapName,
+        });
+        if (n > 0) {
+          console.log(
+            `[gameLogs] enriched ${n} player IGN(s) from chat service=${serviceId}`
+          );
+        }
+      }
     } catch (error) {
       console.warn(
         `[gameLogs] guild pull failed serviceId=${serviceId} map=${server.name}: ${error.message}`
@@ -301,17 +316,20 @@ function unixFromIso(at) {
 
 function formatChatLine(entry) {
   const unix = unixFromIso(entry.at);
-  const player = escapeMdBold(entry.playerName || 'Unknown');
+  const gamertag = entry.playerName || 'Unknown';
+  const ign = entry.tribeOrChar ? String(entry.tribeOrChar).trim() : '';
   const message = String(entry.message || entry.text || '')
     .replace(/\r?\n/g, ' ')
     .trim();
 
-  if (entry.tribeOrChar) {
-    const tribe = sanitizeInlineCode(entry.tribeOrChar);
-    return `<t:${unix}:R> - **${player}** \`(${tribe})\` : ${message}`;
+  // ASE Xbox: left side is usually gamertag; parentheses is often character/IGN.
+  if (ign && ign.toLowerCase() !== String(gamertag).toLowerCase()) {
+    return `<t:${unix}:R> - **${escapeMdBold(ign)}** (\`${sanitizeInlineCode(
+      gamertag
+    )}\`) : ${message}`;
   }
 
-  return `<t:${unix}:R> - **${player}** : ${message}`;
+  return `<t:${unix}:R> - **${escapeMdBold(gamertag)}** : ${message}`;
 }
 
 function formatChatDescription(entries, emptyMessage) {

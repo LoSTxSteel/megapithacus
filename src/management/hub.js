@@ -368,7 +368,7 @@ function featureSetupText(guild, key) {
       `Minimum: **${settings.minScore}** · Punishment: **${punishmentSummary(settings)}**`
     );
     extras.push(
-      'Setup includes min score + punishment dropdowns. Also `/gamerscoremanager`.'
+      'Setup includes min score + kick/permanent-ban. Also `/gamerscoremanager`.'
     );
   }
 
@@ -474,17 +474,19 @@ function featureDetailPanel(guild, key) {
       .setCustomId(`mgmt:feat:enable:${key}`)
       .setLabel('Enable')
       .setStyle(ButtonStyle.Success)
-      .setDisabled(enabled || !configured),
-    new ButtonBuilder()
-      .setCustomId(`mgmt:feat:disable:${key}`)
-      .setLabel('Disable')
-      .setStyle(ButtonStyle.Danger)
-      .setDisabled(!enabled),
-    new ButtonBuilder()
-      .setCustomId('mgmt:back:features')
-      .setLabel('Back')
-      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(enabled || !configured)
   );
+
+  // Gamerscore: no Disable control (enable + thresholds only)
+  if (key !== 'gamerscoreDetection') {
+    controls.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`mgmt:feat:disable:${key}`)
+        .setLabel('Disable')
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!enabled)
+    );
+  }
 
   if (key === 'gamerscoreDetection') {
     controls.addComponents(
@@ -494,6 +496,13 @@ function featureDetailPanel(guild, key) {
         .setStyle(ButtonStyle.Secondary)
     );
   }
+
+  controls.addComponents(
+    new ButtonBuilder()
+      .setCustomId('mgmt:back:features')
+      .setLabel('Back')
+      .setStyle(ButtonStyle.Secondary)
+  );
 
   return {
     embeds: [embed],
@@ -550,33 +559,7 @@ function gamerscoreSetupWizard(guild, { content = null } = {}) {
         {
           label: 'Ban',
           value: 'ban',
-          description: 'Temp or permanent via duration below',
-        }
-      )
-  );
-
-  const durationRow = new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('mgmt:gscore:duration')
-      .setPlaceholder(
-        settings.punishment === 'ban'
-          ? `Ban duration (current: ${
-              settings.durationMinutes === 0
-                ? 'permanent'
-                : `${settings.durationMinutes}m`
-            })`
-          : 'Ban duration (only used when punishment is ban)'
-      )
-      .addOptions(
-        { label: '60 minutes', value: '60' },
-        { label: '24 hours', value: '1440' },
-        { label: '7 days', value: '10080' },
-        { label: '30 days', value: '43200' },
-        { label: 'Permanent', value: '0' },
-        {
-          label: 'Custom minutes…',
-          value: 'custom',
-          description: 'Enter minutes (0 = permanent)',
+          description: 'Permanent cluster banlist entry',
         }
       )
   );
@@ -584,7 +567,7 @@ function gamerscoreSetupWizard(guild, { content = null } = {}) {
   const actions = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('mgmt:gscore:finish')
-      .setLabel(configured ? 'Save & re-run channel setup' : 'Create channel & finish')
+      .setLabel(configured ? 'Save & finish' : 'Create channel & finish')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId('mgmt:gscore:back')
@@ -598,7 +581,6 @@ function gamerscoreSetupWizard(guild, { content = null } = {}) {
       categorySelect('features'),
       minRow,
       punishRow,
-      durationRow,
       actions,
     ],
     content,
@@ -1220,52 +1202,15 @@ async function handleManagement(interaction) {
 
     if (interaction.isStringSelectMenu() && id === 'mgmt:gscore:punish') {
       const punishment = interaction.values[0] === 'ban' ? 'ban' : 'kick';
-      updateGuild(guildId, { gamerscoreDetection: { punishment } });
+      updateGuild(guildId, {
+        gamerscoreDetection: {
+          punishment,
+          ...(punishment === 'ban' ? { durationMinutes: 0 } : {}),
+        },
+      });
       await interaction.update(
         gamerscoreSetupWizard(getGuild(guildId), {
           content: `Punishment set to **${punishment}**.`,
-        })
-      );
-      return;
-    }
-
-    if (interaction.isStringSelectMenu() && id === 'mgmt:gscore:duration') {
-      const value = interaction.values[0];
-      if (value === 'custom') {
-        await interaction.showModal(
-          new ModalBuilder()
-            .setCustomId('mgmt:gscore:modal:duration')
-            .setTitle('Ban duration (minutes)')
-            .addComponents(
-              new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                  .setCustomId('value')
-                  .setLabel('Minutes (0 = permanent ban)')
-                  .setStyle(TextInputStyle.Short)
-                  .setRequired(true)
-                  .setMinLength(1)
-                  .setMaxLength(12)
-                  .setValue(
-                    String(settingsFor(getGuild(guildId)).durationMinutes)
-                  )
-                  .setPlaceholder('e.g. 60')
-              )
-            )
-        );
-        return;
-      }
-      updateGuild(guildId, {
-        gamerscoreDetection: {
-          durationMinutes: Math.floor(Number(value)) || 0,
-        },
-      });
-      const mins = Math.floor(Number(value)) || 0;
-      await interaction.update(
-        gamerscoreSetupWizard(getGuild(guildId), {
-          content:
-            mins === 0
-              ? 'Ban duration set to **permanent**.'
-              : `Ban duration set to **${mins}** minutes.`,
         })
       );
       return;
@@ -1289,35 +1234,6 @@ async function handleManagement(interaction) {
       await interaction.reply({
         ...gamerscoreSetupWizard(getGuild(guildId), {
           content: `Minimum gamerscore set to \`${Math.floor(value)}\`.`,
-        }),
-        ephemeral: true,
-      });
-      return;
-    }
-
-    if (interaction.isModalSubmit() && id === 'mgmt:gscore:modal:duration') {
-      const raw = interaction.fields.getTextInputValue('value');
-      const value = Number(String(raw).trim());
-      if (!Number.isFinite(value) || value < 0 || value > 525600) {
-        await interaction.reply({
-          embeds: [
-            errorEmbed(
-              'Enter minutes as a number from 0 (permanent) to 525600 (1 year).'
-            ),
-          ],
-          ephemeral: true,
-        });
-        return;
-      }
-      updateGuild(guildId, {
-        gamerscoreDetection: { durationMinutes: Math.floor(value) },
-      });
-      await interaction.reply({
-        ...gamerscoreSetupWizard(getGuild(guildId), {
-          content:
-            Math.floor(value) === 0
-              ? 'Ban duration set to **permanent**.'
-              : `Ban duration set to **${Math.floor(value)}** minutes.`,
         }),
         ephemeral: true,
       });
