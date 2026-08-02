@@ -39,6 +39,8 @@ module.exports = {
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
             "`/creditview` — view another user's credit balance",
             '`/servermanager` — Nitrado hub (start/stop/restart, password, name)',
+            '`/rollback` — restore Nitrado backup or dated SavedArks `.ark`',
+            '`/upload` — upload a custom `.ark` save (Discord size limits apply)',
             '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',

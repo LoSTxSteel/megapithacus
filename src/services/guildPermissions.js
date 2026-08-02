@@ -11,8 +11,9 @@ const PERMISSION_AREAS = {
   serverPower: {
     key: 'serverPower',
     label: 'Server power',
-    description: 'Start, stop, and restart Nitrado ASE game servers',
-    commandHint: '`/servermanager` or `/management` → Server Management → Server power',
+    description: 'Start, stop, restart, and manage ASE saves on Nitrado',
+    commandHint:
+      '`/servermanager`, `/rollback`, `/upload`, or `/management` → Server Management → Server power',
   },
   rewardManager: {
     key: 'rewardManager',

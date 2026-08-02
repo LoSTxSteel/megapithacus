@@ -72,6 +72,16 @@ function tryGamerscoreHubInteraction(interaction) {
   }
 }
 
+function trySaveHubInteraction(interaction) {
+  try {
+    const { handleSaveHubInteraction } = require('../management/saveHub');
+    return handleSaveHubInteraction(interaction);
+  } catch (error) {
+    console.warn('Save hub unavailable:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
@@ -119,6 +129,10 @@ module.exports = {
       }
 
       if (await tryServerManagerHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await trySaveHubInteraction(interaction)) {
         return;
       }
 

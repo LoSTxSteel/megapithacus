@@ -1448,6 +1448,589 @@ async function fetchGameLogText(serviceId, token) {
   };
 }
 
+// ── ASE / arkxb save management (backups + SavedArks) ──────────────────────
+
+const SAVE_LIST_CACHE_TTL_MS = 90 * 1000;
+/** @type {Map<string, { saves: any[], expiresAt: number }>} */
+const saveListCache = new Map();
+
+const SAVE_FILE_RE = /\.(ark|arktribe|arkprofile|bak)$/i;
+const DATED_ARK_RE = /^(.+?)_(\d{2}\.\d{2}\.\d{4}_\d{2}\.\d{2}\.\d{2})\.ark$/i;
+const ANTI_CORRUPT_RE = /^(.+?)_AntiCorruptionBackup\.bak$/i;
+
+function savedArksDirCandidates(username, game, bookmarks = []) {
+  const dirs = [];
+  const u = username ? String(username) : '';
+  const g = game ? String(game) : '';
+  if (u && g) {
+    dirs.push(`/games/${u}/noftp/${g}/ShooterGame/Saved/SavedArks`);
+    dirs.push(`/games/${u}/ftproot/${g}/ShooterGame/Saved/SavedArks`);
+    dirs.push(`/games/${u}/noftp/${g}/ShooterGame/Saved`);
+  }
+  for (const raw of bookmarks || []) {
+    const path =
+      typeof raw === 'string'
+        ? raw
+        : raw?.path || raw?.dir || raw?.directory || raw?.value;
+    if (!path) continue;
+    const p = String(path);
+    if (/SavedArks/i.test(p)) dirs.push(p.replace(/\/+$/, ''));
+    else if (/\/Saved\/?$/i.test(p)) dirs.push(`${p.replace(/\/+$/, '')}/SavedArks`);
+    else if (/ShooterGame\/Saved/i.test(p) && !/Logs/i.test(p)) {
+      dirs.push(p.replace(/\/+$/, ''));
+      if (!/SavedArks/i.test(p)) dirs.push(`${p.replace(/\/+$/, '')}/SavedArks`);
+    }
+  }
+  return [...new Set(dirs.filter(Boolean))];
+}
+
+function formatBytes(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  if (num < 1024) return `${num} B`;
+  if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
+  if (num < 1024 * 1024 * 1024) return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatSaveTime(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 1e12 ? value * 1000 : value;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? String(value) : d.toISOString().replace('T', ' ').slice(0, 19);
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().replace('T', ' ').slice(0, 19);
+  return s.slice(0, 32);
+}
+
+/**
+ * Infer active map .ark name from a dated backup / AntiCorruption file.
+ */
+function inferActiveArkName(fileName, mapHint = null) {
+  const base = String(fileName || '')
+    .split(/[/\\]/)
+    .pop();
+  const dated = base.match(DATED_ARK_RE);
+  if (dated) return `${dated[1]}.ark`;
+  const anti = base.match(ANTI_CORRUPT_RE);
+  if (anti) return `${anti[1]}.ark`;
+  if (/\.ark$/i.test(base) && !/_AntiCorruption/i.test(base)) return base;
+  if (mapHint) {
+    const map = String(mapHint).trim().replace(/\s+/g, '');
+    if (map) return `${map}.ark`;
+  }
+  return base;
+}
+
+function isPastArkSave(name) {
+  const n = String(name || '');
+  if (DATED_ARK_RE.test(n)) return true;
+  if (ANTI_CORRUPT_RE.test(n)) return true;
+  // Keep non-active .bak map saves; skip plain tribe/profile for rollback list.
+  if (/\.bak$/i.test(n) && !/profile|tribe/i.test(n)) return true;
+  return false;
+}
+
+/**
+ * Normalize GET /gameservers/backups payloads into flat restore targets.
+ * Shape varies; PHP SDK restores with { game, backup }.
+ */
+function normalizeNitradoBackups(raw, fallbackGame = null) {
+  const out = [];
+  const backupsRoot = raw?.backups ?? raw;
+  if (!backupsRoot) return out;
+
+  const pushItem = (game, item, index) => {
+    if (item == null) return;
+    if (typeof item === 'string' || typeof item === 'number') {
+      const id = String(item);
+      out.push({
+        kind: 'nitrado',
+        id: `n:${game || 'game'}:${id}`,
+        game: game || fallbackGame || 'arkxb',
+        backup: id,
+        label: `Nitrado backup ${id}`,
+        timestamp: null,
+        size: null,
+      });
+      return;
+    }
+    if (typeof item !== 'object') return;
+    const backup =
+      item.backup ??
+      item.number ??
+      item.id ??
+      item.name ??
+      item.timestamp ??
+      item.file ??
+      index;
+    if (backup == null) return;
+    const gameName =
+      item.game || item.folder || item.folder_short || game || fallbackGame || 'arkxb';
+    const ts =
+      formatSaveTime(item.timestamp || item.time || item.date || item.created_at) ||
+      null;
+    const size = item.filesize ?? item.size ?? item.bytes ?? null;
+    const sizeLabel = formatBytes(size);
+    out.push({
+      kind: 'nitrado',
+      id: `n:${gameName}:${backup}`,
+      game: String(gameName),
+      backup: String(backup),
+      label: [
+        'Nitrado',
+        ts || `backup ${backup}`,
+        sizeLabel,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      timestamp: ts,
+      size,
+    });
+  };
+
+  const walkGameserver = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const entry = node[i];
+        if (entry && typeof entry === 'object' && (entry.game || entry.folder)) {
+          const g = entry.game || entry.folder;
+          const list = entry.backups || entry.files || entry.items || entry.list;
+          if (Array.isArray(list)) {
+            list.forEach((item, idx) => pushItem(g, item, idx));
+          } else {
+            pushItem(g, entry, i);
+          }
+        } else {
+          pushItem(fallbackGame, entry, i);
+        }
+      }
+      return;
+    }
+    if (typeof node === 'object') {
+      for (const [key, value] of Object.entries(node)) {
+        if (Array.isArray(value)) {
+          value.forEach((item, idx) => pushItem(key, item, idx));
+        } else if (value && typeof value === 'object') {
+          walkGameserver(value);
+        }
+      }
+    }
+  };
+
+  if (Array.isArray(backupsRoot)) {
+    walkGameserver(backupsRoot);
+  } else if (typeof backupsRoot === 'object') {
+    if (backupsRoot.gameserver != null) walkGameserver(backupsRoot.gameserver);
+    else walkGameserver(backupsRoot);
+  }
+
+  // De-dupe by id
+  const seen = new Set();
+  return out.filter((s) => {
+    if (seen.has(s.id)) return false;
+    seen.add(s.id);
+    return true;
+  });
+}
+
+async function listNitradoBackups(serviceId, token) {
+  const data = await apiGet(`/services/${serviceId}/gameservers/backups`, token);
+  let game = null;
+  try {
+    const gs = await getGameserverCached(serviceId, token);
+    game = gs?.game ? String(gs.game) : null;
+  } catch {
+    // ignore — normalize still works with fallback
+  }
+  return normalizeNitradoBackups(data, game);
+}
+
+async function resolveSavedArksDir(serviceId, token) {
+  if (isRateLimited(serviceId)) {
+    throw new NitradoError(
+      `Nitrado file_server rate limited for service ${serviceId}. Try again shortly.`,
+      429
+    );
+  }
+
+  const gameserver = await getGameserverCached(serviceId, token);
+  const username = gameserver.username || gameserver.user_name;
+  const game = gameserver.game ? String(gameserver.game) : null;
+  let bookmarks = [];
+  try {
+    bookmarks = await listFileBookmarks(serviceId, token);
+  } catch (error) {
+    if (is429(error)) {
+      markRateLimited(serviceId);
+      throw error;
+    }
+  }
+
+  const candidates = savedArksDirCandidates(username, game, bookmarks);
+  let lastError = null;
+  for (const dir of candidates) {
+    try {
+      const entries = await listFilesCached(serviceId, token, dir);
+      clearRateLimit(serviceId);
+      const hasArk = (entries || []).some((e) =>
+        SAVE_FILE_RE.test(entryBaseName(e))
+      );
+      // Prefer a dir that actually contains save files; accept first listable SavedArks.
+      if (hasArk || /SavedArks/i.test(dir)) {
+        return {
+          dir,
+          entries: entries || [],
+          gameserver,
+          username,
+          game,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+      if (is429(error)) {
+        markRateLimited(serviceId);
+        throw error;
+      }
+    }
+  }
+
+  throw new NitradoError(
+    `Could not locate SavedArks for service ${serviceId}` +
+      (username && game ? ` (tried under /games/${username}/…/${game}/…)` : '') +
+      (lastError ? `: ${lastError.message}` : '.'),
+    404
+  );
+}
+
+async function listArkFileSaves(serviceId, token) {
+  const { dir, entries, gameserver } = await resolveSavedArksDir(serviceId, token);
+  const mapHint = extractMapName(gameserver, null);
+  const saves = [];
+
+  for (const entry of entries || []) {
+    if (!isFileEntry(entry)) continue;
+    const name = entryBaseName(entry);
+    if (!SAVE_FILE_RE.test(name)) continue;
+    // Rollback list: past / dated saves (not every tribe file).
+    if (!isPastArkSave(name) && !/\.ark$/i.test(name)) continue;
+    // Include dated/bak always; include plain .ark as "current" for context (not restore target preferred).
+    const path = entry.path || `${dir}/${name}`;
+    const ts =
+      formatSaveTime(entry.modified_at || entry.mtime || entry.modified || entry.timestamp) ||
+      null;
+    const size = entry.size ?? entry.filesize ?? null;
+    const past = isPastArkSave(name);
+    const sizeLabel = formatBytes(size);
+    saves.push({
+      kind: 'ark',
+      id: `a:${Buffer.from(path).toString('base64url').slice(0, 80)}`,
+      path,
+      name,
+      dir,
+      targetName: inferActiveArkName(name, mapHint),
+      current: !past && /\.ark$/i.test(name),
+      label: [
+        past ? 'Map save' : 'Current',
+        name,
+        ts,
+        sizeLabel,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      timestamp: ts,
+      size,
+    });
+  }
+
+  // Prefer past saves first, then by timestamp/name desc
+  saves.sort((a, b) => {
+    if (a.current !== b.current) return a.current ? 1 : -1;
+    return String(b.timestamp || b.name).localeCompare(String(a.timestamp || a.name));
+  });
+
+  return saves;
+}
+
+/**
+ * Unified save/backup list for /rollback.
+ * Combines Nitrado gameserver backups + dated SavedArks files.
+ * Cached briefly to respect file_server rate limits.
+ */
+async function listSaves(serviceId, token, { force = false } = {}) {
+  const key = String(serviceId);
+  if (!force) {
+    const hit = saveListCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.saves;
+  }
+
+  const saves = [];
+  const errors = [];
+
+  try {
+    const nitrado = await listNitradoBackups(serviceId, token);
+    saves.push(...nitrado);
+  } catch (error) {
+    errors.push(`Nitrado backups: ${error.message}`);
+    if (is429(error)) markRateLimited(serviceId);
+  }
+
+  try {
+    const ark = await listArkFileSaves(serviceId, token);
+    // For rollback picker, prefer past saves; keep a few current as context only if no past.
+    const past = ark.filter((s) => !s.current);
+    saves.push(...(past.length ? past : ark.slice(0, 5)));
+  } catch (error) {
+    errors.push(`SavedArks: ${error.message}`);
+    if (is429(error)) markRateLimited(serviceId);
+  }
+
+  // Stable short option values for Discord selects (max 100 chars)
+  const withKeys = saves.map((s, index) => ({
+    ...s,
+    selectValue: `s${index}`,
+  }));
+
+  saveListCache.set(key, {
+    saves: withKeys,
+    expiresAt: Date.now() + SAVE_LIST_CACHE_TTL_MS,
+    errors,
+  });
+
+  return withKeys;
+}
+
+function getCachedSaveListMeta(serviceId) {
+  return saveListCache.get(String(serviceId)) || null;
+}
+
+function invalidateSaveListCache(serviceId) {
+  if (serviceId == null) {
+    saveListCache.clear();
+    return;
+  }
+  saveListCache.delete(String(serviceId));
+}
+
+/**
+ * Official Nitrado gameserver image restore.
+ * POST /services/{id}/gameservers/backups/gameserver  { game, backup }
+ */
+async function restoreNitradoBackup(serviceId, token, game, backup) {
+  if (!game || backup == null || backup === '') {
+    throw new NitradoError('Restore requires game folder and backup id.', 400);
+  }
+  const data = await apiPost(
+    `/services/${serviceId}/gameservers/backups/gameserver`,
+    token,
+    {
+      game: String(game),
+      backup: String(backup),
+    }
+  );
+  invalidateSaveListCache(serviceId);
+  return data;
+}
+
+async function copyGameserverFile(serviceId, token, sourcePath, targetDir, targetName) {
+  return apiPost(`/services/${serviceId}/gameservers/file_server/copy`, token, {
+    source_path: String(sourcePath),
+    target_path: String(targetDir),
+    target_name: String(targetName),
+  });
+}
+
+/**
+ * Restore a listed save:
+ * - kind=nitrado → official backup restore (may take 10–30m; IP/settings can change)
+ * - kind=ark → stop, copy dated save over active map .ark, optionally start
+ */
+async function restoreSave(serviceId, token, save, { startAfter = true } = {}) {
+  if (!save || !save.kind) {
+    throw new NitradoError('No save selected.', 400);
+  }
+
+  if (save.kind === 'nitrado') {
+    const data = await restoreNitradoBackup(serviceId, token, save.game, save.backup);
+    return {
+      ok: true,
+      kind: 'nitrado',
+      restarted: false,
+      needsRestart: true,
+      warning:
+        'Nitrado gameserver restore can take 10–30 minutes and may change the server IP / settings.',
+      data,
+    };
+  }
+
+  if (save.kind === 'ark') {
+    if (save.current) {
+      throw new NitradoError(
+        `Refusing to restore current active save "${save.name}" onto itself. Pick a dated backup.`,
+        400
+      );
+    }
+    const targetName = save.targetName || inferActiveArkName(save.name);
+    const targetDir = save.dir || String(save.path).replace(/[/\\][^/\\]+$/, '');
+    if (!save.path || !targetDir || !targetName) {
+      throw new NitradoError('Save path incomplete for file restore.', 400);
+    }
+
+    let stopped = false;
+    try {
+      await stopGameserver(serviceId, token);
+      stopped = true;
+    } catch (error) {
+      // Continue if already stopped; fail hard on other errors.
+      if (!/already|stopped|offline|not running/i.test(String(error.message || ''))) {
+        throw error;
+      }
+    }
+
+    await copyGameserverFile(serviceId, token, save.path, targetDir, targetName);
+    invalidateSaveListCache(serviceId);
+
+    let started = false;
+    if (startAfter) {
+      await startGameserver(serviceId, token);
+      started = true;
+    }
+
+    return {
+      ok: true,
+      kind: 'ark',
+      stopped,
+      started,
+      restarted: started,
+      needsRestart: !started,
+      targetName,
+      sourceName: save.name,
+    };
+  }
+
+  throw new NitradoError(`Unknown save kind: ${save.kind}`, 400);
+}
+
+/**
+ * Request upload token then POST binary to Nitrado's upload URL.
+ * Official PHP SDK: POST upload { path, file } → POST body to token.url with header token.
+ */
+async function uploadFileBinary(serviceId, token, dirPath, fileName, buffer) {
+  const data = await apiPost(
+    `/services/${serviceId}/gameservers/file_server/upload`,
+    token,
+    {
+      path: String(dirPath),
+      file: String(fileName),
+    }
+  );
+  const uploadUrl = data?.token?.url;
+  const uploadToken = data?.token?.token;
+  if (!uploadUrl || !uploadToken) {
+    throw new NitradoError(`No upload token for ${fileName}`, 502);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  let res;
+  try {
+    res = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/binary',
+        token: uploadToken,
+      },
+      body: buffer,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new NitradoError(`Upload timed out for ${fileName}`, 408);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    let detail = '';
+    try {
+      detail = (await res.text()).slice(0, 200);
+    } catch {
+      // ignore
+    }
+    throw new NitradoError(
+      `Nitrado upload failed for ${fileName} (${res.status})${detail ? `: ${detail}` : ''}`,
+      res.status
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Upload a custom ASE save into SavedArks.
+ * Best practice: stop → replace → start.
+ */
+async function uploadSave(
+  serviceId,
+  token,
+  buffer,
+  fileName,
+  { startAfter = true, stopFirst = true } = {}
+) {
+  const name = String(fileName || '')
+    .split(/[/\\]/)
+    .pop();
+  if (!SAVE_FILE_RE.test(name)) {
+    throw new NitradoError(
+      `Unsupported save extension for "${name}". Use .ark (or .arktribe / .bak).`,
+      400
+    );
+  }
+  if (!buffer || !Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array)) {
+    throw new NitradoError('Upload requires a binary buffer.', 400);
+  }
+  const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+
+  const { dir } = await resolveSavedArksDir(serviceId, token);
+
+  if (stopFirst) {
+    try {
+      await stopGameserver(serviceId, token);
+    } catch (error) {
+      if (!/already|stopped|offline|not running/i.test(String(error.message || ''))) {
+        throw error;
+      }
+    }
+  }
+
+  await uploadFileBinary(serviceId, token, dir, name, body);
+  invalidateSaveListCache(serviceId);
+  // Also clear list cache for this dir so next list sees the new file
+  listCache.delete(`${serviceId}:${dir}`);
+
+  let started = false;
+  if (startAfter) {
+    await startGameserver(serviceId, token);
+    started = true;
+  }
+
+  return {
+    ok: true,
+    dir,
+    fileName: name,
+    bytes: body.length,
+    started,
+    needsRestart: !started,
+  };
+}
+
 module.exports = {
   NitradoError,
   resolveToken,
@@ -1484,4 +2067,16 @@ module.exports = {
   fetchGameLogText,
   pickGameLogFiles,
   scoreGameLogEntry,
+  listSaves,
+  listNitradoBackups,
+  restoreSave,
+  restoreNitradoBackup,
+  uploadSave,
+  uploadFileBinary,
+  resolveSavedArksDir,
+  inferActiveArkName,
+  invalidateSaveListCache,
+  getCachedSaveListMeta,
+  formatBytes,
+  SAVE_FILE_RE,
 };
