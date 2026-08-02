@@ -231,17 +231,28 @@ function parseLogText(text, mapName, serviceId) {
   return { chat, admin };
 }
 
-/**
- * Collect per-map chat + in-game admin lines from Nitrado.
- * When guildId is provided, also enrich player profiles with IGNs from chat
- * (`Gamertag (CharacterName): message` on ASE Xbox).
- * @returns {{ byMap: Record<string, { name, chat, admin, error? }>, errors: string[] }}
- */
-async function collectPerMapLogs(guild, guildId = null) {
+/** Stagger cluster pulls so Nitrado file_server isn't hit in a burst. */
+const SERVICE_STAGGER_MS = 500;
+/** Share one pull between admin + chat boards in the same refresh cycle. */
+const COLLECT_CACHE_TTL_MS = 60_000;
+/** @type {Map<string, { at: number, result?: any, promise?: Promise<any> }>} */
+const collectCache = new Map();
+/** Last successful parse per service — keep boards alive across 429 cooldowns. */
+const lastGoodByService = new Map();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function collectPerMapLogsUncached(guild, guildId = null) {
   const byMap = {};
   const errors = [];
+  const servers = guild.servers || [];
 
-  for (const server of guild.servers || []) {
+  for (let i = 0; i < servers.length; i += 1) {
+    const server = servers[i];
+    if (i > 0) await sleep(SERVICE_STAGGER_MS);
+
     const serviceId = String(server.serviceId);
     const token = tokenForServer(server, guild);
     if (!token) {
@@ -256,19 +267,43 @@ async function collectPerMapLogs(guild, guildId = null) {
     }
 
     try {
-      const { gameserver, text, logFiles } = await fetchGameLogText(
-        serviceId,
-        token
-      );
+      const { gameserver, text, logFiles, rateLimited, skipped } =
+        await fetchGameLogText(serviceId, token);
+
+      if (rateLimited || skipped === 'rate_limited') {
+        const prev = lastGoodByService.get(serviceId);
+        if (prev) {
+          byMap[serviceId] = {
+            ...prev,
+            rateLimited: true,
+            stale: true,
+            error: 'Stale — Nitrado rate limited',
+          };
+        } else {
+          byMap[serviceId] = {
+            name: server.name,
+            chat: [],
+            admin: [],
+            rateLimited: true,
+            error: 'Nitrado rate limited — backing off',
+          };
+        }
+        continue;
+      }
+
       const mapName =
         extractMapName(gameserver, server.name) || server.name || serviceId;
       const parsed = parseLogText(text, mapName, serviceId);
-      byMap[serviceId] = {
+      const entry = {
         name: mapName,
         chat: parsed.chat.slice(-40),
         admin: parsed.admin.slice(-40),
         logFiles: logFiles || [],
       };
+      byMap[serviceId] = entry;
+      if (entry.chat.length || entry.admin.length || (logFiles && logFiles.length)) {
+        lastGoodByService.set(serviceId, { ...entry });
+      }
 
       if (guildId && parsed.chat.length) {
         const n = enrichPlayersFromChatLogs(guildId, parsed.chat, {
@@ -285,17 +320,57 @@ async function collectPerMapLogs(guild, guildId = null) {
       console.warn(
         `[gameLogs] guild pull failed serviceId=${serviceId} map=${server.name}: ${error.message}`
       );
-      byMap[serviceId] = {
-        name: server.name,
-        chat: [],
-        admin: [],
-        error: error.message,
-      };
-      errors.push(`${server.name}: ${error.message}`);
+      const prev = lastGoodByService.get(serviceId);
+      if (prev && /\b429\b/.test(String(error.message || ''))) {
+        byMap[serviceId] = {
+          ...prev,
+          rateLimited: true,
+          stale: true,
+          error: 'Stale — Nitrado rate limited',
+        };
+      } else {
+        byMap[serviceId] = {
+          name: server.name,
+          chat: [],
+          admin: [],
+          error: error.message,
+        };
+        errors.push(`${server.name}: ${error.message}`);
+      }
     }
   }
 
   return { byMap, errors };
+}
+
+/**
+ * Collect per-map chat + in-game admin lines from Nitrado.
+ * When guildId is provided, also enrich player profiles with IGNs from chat
+ * (`Gamertag (CharacterName): message` on ASE Xbox).
+ * Dedupes concurrent/near-concurrent pulls (admin + chat boards).
+ * @returns {{ byMap: Record<string, { name, chat, admin, error? }>, errors: string[] }}
+ */
+async function collectPerMapLogs(guild, guildId = null) {
+  const cacheKey = guildId || '_anon';
+  const hit = collectCache.get(cacheKey);
+  if (hit) {
+    if (hit.promise) return hit.promise;
+    if (hit.result && Date.now() - hit.at < COLLECT_CACHE_TTL_MS) {
+      return hit.result;
+    }
+  }
+
+  const promise = collectPerMapLogsUncached(guild, guildId).then((result) => {
+    collectCache.set(cacheKey, { at: Date.now(), result });
+    return result;
+  });
+  collectCache.set(cacheKey, { at: Date.now(), promise });
+  try {
+    return await promise;
+  } catch (error) {
+    collectCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 function escapeMdBold(name) {

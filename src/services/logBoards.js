@@ -103,7 +103,13 @@ function shouldRefreshMapLogs(guild, featureKey) {
   return Boolean(setup?.forumId || countMapLogThreads(guild, featureKey));
 }
 
-async function refreshAdminBoard(client, guildId) {
+/**
+ * @param {import('discord.js').Client} client
+ * @param {string} guildId
+ * @param {{ byMap?: Record<string, any>, errors?: string[] } | null} [precollected]
+ * @param {any} [guildFreshIn]
+ */
+async function refreshAdminBoard(client, guildId, precollected = null, guildFreshIn = null) {
   const guild = getGuild(guildId);
   if (!isFeatureEnabled(guild, 'adminLogging')) return;
 
@@ -121,7 +127,7 @@ async function refreshAdminBoard(client, guildId) {
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const guildFresh = await syncMapForums(discordGuild, guildId);
+  const guildFresh = guildFreshIn || (await syncMapForums(discordGuild, guildId));
   if (!countMapLogThreads(guildFresh, 'adminLogging')) {
     const key = `${guildId}:adminLogging:nothreads`;
     if (!skipConfiguredWarned.has(key)) {
@@ -134,11 +140,12 @@ async function refreshAdminBoard(client, guildId) {
   }
 
   const collected =
-    (guildFresh.nitradoAccounts || []).length
+    precollected ||
+    ((guildFresh.nitradoAccounts || []).length
       ? await collectPerMapLogs(guildFresh, guildId)
-      : { byMap: {}, errors: ['Add Nitrado token first'] };
+      : { byMap: {}, errors: ['Add Nitrado token first'] });
 
-  if (collected.errors?.length) {
+  if (!precollected && collected.errors?.length) {
     console.warn(
       `[logBoards] adminLogging pull errors guild=${guildId}: ${collected.errors
         .slice(0, 5)
@@ -153,6 +160,8 @@ async function refreshAdminBoard(client, guildId) {
       admin: [],
       error: 'No data',
     };
+    // Keep last Discord message when rate-limited with stale data.
+    if (mapData.rateLimited && mapData.stale) continue;
     await editMapFeatureThread(
       discordGuild,
       guildId,
@@ -169,7 +178,13 @@ async function refreshAdminBoard(client, guildId) {
   }
 }
 
-async function refreshChatBoard(client, guildId) {
+/**
+ * @param {import('discord.js').Client} client
+ * @param {string} guildId
+ * @param {{ byMap?: Record<string, any>, errors?: string[] } | null} [precollected]
+ * @param {any} [guildFreshIn]
+ */
+async function refreshChatBoard(client, guildId, precollected = null, guildFreshIn = null) {
   const guild = getGuild(guildId);
   if (!isFeatureEnabled(guild, 'chatLogs')) return;
 
@@ -187,7 +202,7 @@ async function refreshChatBoard(client, guildId) {
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const guildFresh = await syncMapForums(discordGuild, guildId);
+  const guildFresh = guildFreshIn || (await syncMapForums(discordGuild, guildId));
   if (!countMapLogThreads(guildFresh, 'chatLogs')) {
     const key = `${guildId}:chatLogs:nothreads`;
     if (!skipConfiguredWarned.has(key)) {
@@ -200,11 +215,12 @@ async function refreshChatBoard(client, guildId) {
   }
 
   const collected =
-    (guildFresh.nitradoAccounts || []).length
+    precollected ||
+    ((guildFresh.nitradoAccounts || []).length
       ? await collectPerMapLogs(guildFresh, guildId)
-      : { byMap: {}, errors: ['Add Nitrado token first'] };
+      : { byMap: {}, errors: ['Add Nitrado token first'] });
 
-  if (collected.errors?.length) {
+  if (!precollected && collected.errors?.length) {
     console.warn(
       `[logBoards] chatLogs pull errors guild=${guildId}: ${collected.errors
         .slice(0, 5)
@@ -219,6 +235,7 @@ async function refreshChatBoard(client, guildId) {
       chat: [],
       error: 'No data',
     };
+    if (mapData.rateLimited && mapData.stale) continue;
     await editMapFeatureThread(
       discordGuild,
       guildId,
@@ -236,11 +253,45 @@ async function refreshChatBoard(client, guildId) {
 }
 
 async function refreshGuildLogBoards(client, guildId) {
-  // Keep chat refresh alive even if admin board throws.
-  await refreshAdminBoard(client, guildId).catch((error) =>
+  // One forum sync + one Nitrado pull shared by admin + chat (halves list/seek traffic).
+  const guild = getGuild(guildId);
+  const wantAdmin =
+    isFeatureEnabled(guild, 'adminLogging') && shouldRefreshMapLogs(guild, 'adminLogging');
+  const wantChat =
+    isFeatureEnabled(guild, 'chatLogs') && shouldRefreshMapLogs(guild, 'chatLogs');
+
+  let guildFresh = null;
+  let collected = null;
+
+  if (wantAdmin || wantChat) {
+    const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
+    if (discordGuild) {
+      guildFresh = await syncMapForums(discordGuild, guildId);
+      if ((guildFresh.nitradoAccounts || []).length) {
+        try {
+          collected = await collectPerMapLogs(guildFresh, guildId);
+          if (collected.errors?.length) {
+            console.warn(
+              `[logBoards] pull errors guild=${guildId}: ${collected.errors
+                .slice(0, 5)
+                .join('; ')}`
+            );
+          }
+        } catch (error) {
+          console.warn(
+            `[logBoards] collect failed guild=${guildId}: ${error.message}`
+          );
+        }
+      } else {
+        collected = { byMap: {}, errors: ['Add Nitrado token first'] };
+      }
+    }
+  }
+
+  await refreshAdminBoard(client, guildId, collected, guildFresh).catch((error) =>
     console.warn(`[logBoards] adminLogging error guild=${guildId}: ${error.message}`)
   );
-  await refreshChatBoard(client, guildId).catch((error) =>
+  await refreshChatBoard(client, guildId, collected, guildFresh).catch((error) =>
     console.warn(`[logBoards] chatLogs error guild=${guildId}: ${error.message}`)
   );
 }

@@ -878,7 +878,9 @@ async function pathSize(serviceId, token, filePath) {
       token
     );
     return Number(data?.size || 0);
-  } catch {
+  } catch (error) {
+    // Propagate rate limits so callers can back off; other errors → unknown size.
+    if (is429(error)) throw error;
     return 0;
   }
 }
@@ -906,13 +908,112 @@ async function listFileBookmarks(serviceId, token) {
 
 const LOG_TAIL_BYTES = 160000;
 const MAX_LOG_FILES = 4;
+/** Known-good Logs dir + file paths — skip re-list on 5m board polls. */
+const LOG_PATH_CACHE_TTL_MS = 20 * 60 * 1000;
+/** Successful directory listings. */
+const LIST_CACHE_TTL_MS = 15 * 60 * 1000;
+const LIST_EMPTY_CACHE_TTL_MS = 2 * 60 * 1000;
+const GAMESERVER_CACHE_TTL_MS = 10 * 60 * 1000;
+/** 429 cooldown: 5m → 10m → 15m cap. */
+const RATE_LIMIT_BASE_MS = 5 * 60 * 1000;
+const RATE_LIMIT_MAX_MS = 15 * 60 * 1000;
+/** Cap list attempts per fetch (cached dir first). */
+const MAX_LIST_ATTEMPTS = 3;
 
-/** Warn once per service/file (or once per service for empty) — log boards poll often. */
-const logWarnOnce = new Set();
-function warnLogOnce(key, message) {
-  if (logWarnOnce.has(key)) return;
-  logWarnOnce.add(key);
+/** @type {Map<string, { dir: string, paths: { name: string, path: string }[], username?: string, game?: string, expiresAt: number }>} */
+const logPathCache = new Map();
+/** @type {Map<string, { entries: any[], expiresAt: number }>} */
+const listCache = new Map();
+/** @type {Map<string, { until: number, failures: number, warned: boolean }>} */
+const rateLimitState = new Map();
+/** @type {Map<string, { gameserver: any, expiresAt: number }>} */
+const gameserverCache = new Map();
+/** key → last warn timestamp (cooldown window). */
+const logWarnAt = new Map();
+
+function warnLogCooldown(key, message, windowMs = 10 * 60 * 1000) {
+  const last = logWarnAt.get(key) || 0;
+  if (Date.now() - last < windowMs) return;
+  logWarnAt.set(key, Date.now());
   console.warn(message);
+}
+
+function is429(error) {
+  if (!error) return false;
+  if (error.status === 429) return true;
+  return /\b429\b/.test(String(error.message || ''));
+}
+
+function isRateLimited(serviceId) {
+  const st = rateLimitState.get(String(serviceId));
+  return Boolean(st && Date.now() < st.until);
+}
+
+function markRateLimited(serviceId) {
+  const key = String(serviceId);
+  const prev = rateLimitState.get(key);
+  const now = Date.now();
+  const inWindow = prev && now < prev.until;
+  // Escalate across cooldowns (5m → 10m → 15m), not within the same window.
+  const failures = Math.min(inWindow ? prev.failures || 1 : (prev?.failures || 0) + 1, 3);
+  const delay = Math.min(
+    RATE_LIMIT_BASE_MS * 2 ** Math.max(0, failures - 1),
+    RATE_LIMIT_MAX_MS
+  );
+  const until = now + delay;
+  const alreadyWarned = inWindow && prev.warned;
+  rateLimitState.set(key, { until, failures, warned: true });
+  if (!alreadyWarned) {
+    console.warn(
+      `[nitrado] rate limited (429) serviceId=${key} cooldown=${Math.round(delay / 60000)}m — skipping file_server until then`
+    );
+  }
+  return delay;
+}
+
+function clearRateLimit(serviceId) {
+  rateLimitState.delete(String(serviceId));
+}
+
+function getCachedGameserver(serviceId) {
+  const hit = gameserverCache.get(String(serviceId));
+  if (hit && hit.expiresAt > Date.now()) return hit.gameserver;
+  return null;
+}
+
+async function getGameserverCached(serviceId, token) {
+  const cached = getCachedGameserver(serviceId);
+  if (cached) return cached;
+  const gameserver = await getGameserver(serviceId, token);
+  gameserverCache.set(String(serviceId), {
+    gameserver,
+    expiresAt: Date.now() + GAMESERVER_CACHE_TTL_MS,
+  });
+  return gameserver;
+}
+
+async function listFilesCached(serviceId, token, dir) {
+  const key = `${serviceId}:${dir || ''}`;
+  const hit = listCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.entries;
+  const entries = await listFiles(serviceId, token, dir);
+  const ttl = entries?.length ? LIST_CACHE_TTL_MS : LIST_EMPTY_CACHE_TTL_MS;
+  listCache.set(key, { entries, expiresAt: Date.now() + ttl });
+  return entries;
+}
+
+function rememberLogPaths(serviceId, dir, paths, username, game) {
+  if (!dir || !paths?.length) return;
+  logPathCache.set(String(serviceId), {
+    dir,
+    paths: paths.map((p) => ({
+      name: p.name || entryBaseName(p),
+      path: p.path || resolveLogPath(p, dir),
+    })),
+    username,
+    game,
+    expiresAt: Date.now() + LOG_PATH_CACHE_TTL_MS,
+  });
 }
 
 function entryBaseName(entry) {
@@ -970,16 +1071,12 @@ function resolveLogPath(entry, baseDir) {
 /**
  * Prefer seek/tail — full download often 404s while arkxb holds the log open.
  * Negative offset is Nitrado's official tailFile pattern.
+ * Avoid pathSize until the size-less tail fails (saves an API call per file).
  */
 async function readLogFileTail(serviceId, token, entry, baseDir) {
   const filePath = resolveLogPath(entry, baseDir);
   if (!filePath) {
     throw new NitradoError('Log entry has no path/name', 404);
-  }
-
-  let size = Number(entry.size || 0);
-  if (!size || !Number.isFinite(size)) {
-    size = await pathSize(serviceId, token, filePath);
   }
 
   const errors = [];
@@ -996,10 +1093,21 @@ async function readLogFileTail(serviceId, token, entry, baseDir) {
     );
     if (text != null) return text;
   } catch (error) {
+    if (is429(error)) throw error;
     errors.push(`tail:${error.message}`);
   }
 
-  // 2) Absolute offset when size is known.
+  // 2) Absolute offset when size is known (lazy size fetch).
+  let size = Number(entry.size || 0);
+  if (!size || !Number.isFinite(size)) {
+    try {
+      size = await pathSize(serviceId, token, filePath);
+    } catch (error) {
+      if (is429(error)) throw error;
+      size = 0;
+    }
+  }
+
   if (size > 0) {
     const offset = size > LOG_TAIL_BYTES ? size - LOG_TAIL_BYTES : 0;
     try {
@@ -1013,6 +1121,7 @@ async function readLogFileTail(serviceId, token, entry, baseDir) {
       );
       if (text != null) return text;
     } catch (error) {
+      if (is429(error)) throw error;
       errors.push(`seek:${error.message}`);
     }
   }
@@ -1021,6 +1130,7 @@ async function readLogFileTail(serviceId, token, entry, baseDir) {
   try {
     return await downloadFileText(serviceId, token, filePath);
   } catch (error) {
+    if (is429(error)) throw error;
     errors.push(`download:${error.message}`);
     throw new NitradoError(
       `Log read failed for ${filePath} (${errors.join(' | ')})`,
@@ -1029,12 +1139,17 @@ async function readLogFileTail(serviceId, token, entry, baseDir) {
   }
 }
 
+/**
+ * Candidate Logs dirs. Prefer noftp; include ftproot once (bookmarks often use it).
+ * Caller should put a cached known-good dir first and cap list attempts.
+ */
 function logsDirCandidates(username, game, bookmarks = []) {
   const dirs = [];
   if (username && game) {
     dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/Logs`);
+    dirs.push(`/games/${username}/ftproot/${game}/ShooterGame/Saved/Logs`);
     dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/SaveGames/Logs`);
-    // Some Xbox products expose Logs one level under Saved without nesting quirks.
+    // Nested discovery fallback — only when preferred Logs dirs miss.
     dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved`);
   }
   for (const raw of bookmarks) {
@@ -1078,31 +1193,133 @@ function mergeLogEntries(listed, baseDir, { injectKnown = false } = {}) {
 
 /**
  * Best-effort ASE log text from a Nitrado service (Xbox / Microsoft Store).
- * Lists Logs dirs, prefers ServerGame.log, then tails existing files via seek.
+ * Uses cached Logs paths + seek/tail when possible; lists sparingly; backs off on 429.
  */
 async function fetchGameLogText(serviceId, token) {
-  const gameserver = await getGameserver(serviceId, token);
-  const username = gameserver.username || gameserver.user_name;
-  const game = gameserver.game;
+  const sid = String(serviceId);
   const chunks = [];
   const fetchedNames = [];
   let listError = null;
+  let listStatus = null;
   let sawCandidates = false;
+  let readFailCount = 0;
+  let rateLimited = false;
 
-  const serviceLogs = await getServiceLogs(serviceId, token, 1);
-  if (Array.isArray(serviceLogs) && serviceLogs.length) {
-    chunks.push(
-      serviceLogs
-        .map((l) => l.message || l.text || l.content || JSON.stringify(l))
-        .join('\n')
-    );
+  if (isRateLimited(sid)) {
+    return {
+      gameserver: getCachedGameserver(sid) || {},
+      text: '',
+      logFiles: [],
+      rateLimited: true,
+      skipped: 'rate_limited',
+    };
   }
 
-  const bookmarks = await listFileBookmarks(serviceId, token);
-  const dirs = logsDirCandidates(username, game, bookmarks);
+  let gameserver;
+  try {
+    gameserver = await getGameserverCached(sid, token);
+  } catch (error) {
+    if (is429(error)) {
+      markRateLimited(sid);
+      return {
+        gameserver: getCachedGameserver(sid) || {},
+        text: '',
+        logFiles: [],
+        rateLimited: true,
+        skipped: 'rate_limited',
+      };
+    }
+    throw error;
+  }
+
+  const username = gameserver.username || gameserver.user_name;
+  const game = gameserver.game;
+  const pathHit = logPathCache.get(sid);
+
+  // 1) Prefer seek/tail on bookmarked paths — no list.
+  if (pathHit && pathHit.expiresAt > Date.now() && pathHit.paths?.length) {
+    for (const p of pathHit.paths) {
+      const label = p.name || entryBaseName(p) || 'log';
+      try {
+        const text = await readLogFileTail(
+          sid,
+          token,
+          { path: p.path, name: label, size: 0 },
+          pathHit.dir
+        );
+        if (text && text.trim()) {
+          chunks.push(text);
+          fetchedNames.push(label);
+        }
+      } catch (error) {
+        if (is429(error)) {
+          markRateLimited(sid);
+          return {
+            gameserver,
+            text: chunks.join('\n'),
+            logFiles: fetchedNames,
+            rateLimited: true,
+          };
+        }
+        readFailCount += 1;
+        warnLogCooldown(
+          `${sid}:read:${label}`,
+          `[nitrado] log read failed (locked/404) serviceId=${sid} file=${label}: ${error.message}`
+        );
+      }
+    }
+    if (fetchedNames.length) {
+      clearRateLimit(sid);
+      pathHit.expiresAt = Date.now() + LOG_PATH_CACHE_TTL_MS;
+      logPathCache.set(sid, pathHit);
+      return { gameserver, text: chunks.join('\n'), logFiles: fetchedNames };
+    }
+    // Cached paths went stale — fall through to a capped re-list.
+  }
+
+  if (isRateLimited(sid)) {
+    return {
+      gameserver,
+      text: chunks.join('\n'),
+      logFiles: fetchedNames,
+      rateLimited: true,
+      skipped: 'rate_limited',
+    };
+  }
+
+  // 2) Bookmarks only when we have no known-good dir (extra API call otherwise).
+  let bookmarks = [];
+  if (!pathHit?.dir) {
+    try {
+      bookmarks = await listFileBookmarks(sid, token);
+    } catch (error) {
+      if (is429(error)) {
+        markRateLimited(sid);
+        return {
+          gameserver,
+          text: '',
+          logFiles: [],
+          rateLimited: true,
+          skipped: 'rate_limited',
+        };
+      }
+    }
+  }
+
+  const dirs = [];
+  if (pathHit?.dir) dirs.push(pathHit.dir);
+  for (const d of logsDirCandidates(username, game, bookmarks)) {
+    if (!dirs.some((x) => x.toLowerCase() === d.toLowerCase())) dirs.push(d);
+  }
+
   const seenDirs = new Set();
+  let listAttempts = 0;
+  // Fewer attempts when we already know a good dir.
+  const maxLists = pathHit?.dir ? 2 : MAX_LIST_ATTEMPTS;
 
   for (let i = 0; i < dirs.length; i += 1) {
+    if (listAttempts >= maxLists || rateLimited) break;
+
     const base = dirs[i];
     const baseKey = base.toLowerCase();
     if (seenDirs.has(baseKey)) continue;
@@ -1110,15 +1327,22 @@ async function fetchGameLogText(serviceId, token) {
 
     let entries;
     try {
-      entries = await listFiles(serviceId, token, base);
+      listAttempts += 1;
+      entries = await listFilesCached(sid, token, base);
     } catch (error) {
+      if (is429(error)) {
+        markRateLimited(sid);
+        rateLimited = true;
+        break;
+      }
       listError = error.message;
+      listStatus = error.status || null;
       continue;
     }
 
     const inLogsDir = /\/Logs$/i.test(base);
 
-    // Discover nested Logs/ when listing Saved/.
+    // Discover nested Logs/ when listing Saved/ (counts toward later attempts).
     if (!inLogsDir) {
       for (const e of entries || []) {
         const isDir =
@@ -1131,7 +1355,6 @@ async function fetchGameLogText(serviceId, token) {
       }
     }
 
-    // Only inject ServerGame/ShooterGame names under real Logs dirs (not Saved/).
     const merged = mergeLogEntries(entries, base, { injectKnown: inLogsDir });
     const targets = pickGameLogFiles(merged);
     if (!targets.length) continue;
@@ -1140,39 +1363,88 @@ async function fetchGameLogText(serviceId, token) {
     for (const target of targets) {
       const label = target.name || entryBaseName(target) || 'log';
       try {
-        const text = await readLogFileTail(serviceId, token, target, base);
+        const text = await readLogFileTail(sid, token, target, base);
         if (text && text.trim()) {
           chunks.push(text);
           fetchedNames.push(label);
         }
       } catch (error) {
-        // Expected when a listed ShooterGame.log is locked/stale — try next candidate.
-        const unexpected = error.status && error.status !== 404;
-        warnLogOnce(
-          `${serviceId}:${label}:${unexpected ? 'err' : '404'}`,
-          `[nitrado] log read failed serviceId=${serviceId} file=${label}: ${error.message}`
+        if (is429(error)) {
+          markRateLimited(sid);
+          rateLimited = true;
+          break;
+        }
+        readFailCount += 1;
+        warnLogCooldown(
+          `${sid}:read:${label}`,
+          `[nitrado] log read failed (locked/404) serviceId=${sid} file=${label}: ${error.message}`
         );
       }
     }
 
-    // One successful Logs directory is enough
-    if (fetchedNames.length) break;
+    if (fetchedNames.length) {
+      clearRateLimit(sid);
+      rememberLogPaths(sid, base, targets, username, game);
+      break;
+    }
+    if (rateLimited) break;
   }
 
-  if (!fetchedNames.length && (username || game)) {
-    warnLogOnce(
-      `${serviceId}:none`,
-      `[nitrado] no ASE game logs found serviceId=${serviceId}` +
-        ` username=${username || '?'} game=${game || '?'}` +
-        (listError ? ` listError=${listError}` : '') +
-        (sawCandidates ? ' (listed files but reads failed — often locked arkxb logs)' : '')
-    );
+  // Panel service logs only as last-resort fallback (extra API call).
+  if (!fetchedNames.length && !rateLimited) {
+    try {
+      const serviceLogs = await getServiceLogs(sid, token, 1);
+      if (Array.isArray(serviceLogs) && serviceLogs.length) {
+        chunks.push(
+          serviceLogs
+            .map((l) => l.message || l.text || l.content || JSON.stringify(l))
+            .join('\n')
+        );
+      }
+    } catch (error) {
+      if (is429(error)) {
+        markRateLimited(sid);
+        rateLimited = true;
+      }
+    }
+  }
+
+  if (!fetchedNames.length && (username || game) && !rateLimited) {
+    if (sawCandidates || readFailCount > 0) {
+      warnLogCooldown(
+        `${sid}:reads-failed`,
+        `[nitrado] ASE log files found but reads failed (locked/404) serviceId=${sid}` +
+          ` username=${username || '?'} game=${game || '?'}` +
+          ` readFailures=${readFailCount}`
+      );
+    } else if (listStatus === 429 || is429({ message: listError, status: listStatus })) {
+      // Should have been handled above; keep distinct for safety.
+      warnLogCooldown(
+        `${sid}:list-429`,
+        `[nitrado] ASE log list rate limited (429) serviceId=${sid}` +
+          ` username=${username || '?'} game=${game || '?'}`
+      );
+    } else if (listError) {
+      warnLogCooldown(
+        `${sid}:list-failed`,
+        `[nitrado] ASE log dir list failed serviceId=${sid}` +
+          ` username=${username || '?'} game=${game || '?'}` +
+          ` listError=${listError}`
+      );
+    } else {
+      warnLogCooldown(
+        `${sid}:empty`,
+        `[nitrado] ASE Logs dir empty / no ServerGame.log serviceId=${sid}` +
+          ` username=${username || '?'} game=${game || '?'}`
+      );
+    }
   }
 
   return {
     gameserver,
     text: chunks.join('\n'),
     logFiles: fetchedNames,
+    rateLimited,
   };
 }
 
