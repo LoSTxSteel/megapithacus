@@ -44,11 +44,11 @@ const MAP_THREAD_SPECS = MAP_LOG_FORUM_SPECS;
 const FEATURE_META = {
   popManager: {
     key: 'popManager',
-    label: 'Pop Manager',
-    short: 'Auto-refreshing cluster population embed every 5 minutes',
-    channelName: 'pop-manager',
+    label: 'Server Status',
+    short: 'Auto-refreshing server status & population embed every 5 minutes',
+    channelName: 'server-status',
     channelTopic:
-      'Live ASE cluster population — updated every 5 minutes by Megapithacus.',
+      'Live ASE server status & population — updated every 5 minutes by Megapithacus.',
     refreshMinutes: 5,
   },
   banLogging: {
@@ -162,24 +162,40 @@ async function ensureTextChannel(
   category,
   channelName,
   topic,
-  existingChannelId
+  existingChannelId,
+  legacyNames = []
 ) {
   if (existingChannelId) {
     const existing = await discordGuild.channels
       .fetch(existingChannelId)
       .catch(() => null);
     if (existing && existing.type === ChannelType.GuildText) {
+      if (existing.name !== channelName) {
+        await existing.setName(channelName).catch(() => null);
+      }
+      if (topic && existing.topic !== topic) {
+        await existing.setTopic(topic).catch(() => null);
+      }
       return existing;
     }
   }
 
+  const matchName = new Set([channelName, ...legacyNames]);
   const byName = discordGuild.channels.cache.find(
     (c) =>
       c.type === ChannelType.GuildText &&
       c.parentId === category.id &&
-      c.name === channelName
+      matchName.has(c.name)
   );
-  if (byName) return byName;
+  if (byName) {
+    if (byName.name !== channelName) {
+      await byName.setName(channelName).catch(() => null);
+    }
+    if (topic && byName.topic !== topic) {
+      await byName.setTopic(topic).catch(() => null);
+    }
+    return byName;
+  }
 
   return discordGuild.channels.create({
     name: channelName,
@@ -190,7 +206,7 @@ async function ensureTextChannel(
   });
 }
 
-/** Live embed message in a text channel (Pop Manager). */
+/** Live embed message in a text channel (Server Status). */
 async function ensureTextLiveBoard(discordGuild, channel, meta, guildConfig) {
   const existing = guildConfig.featureSetup[meta.key] || {};
   let messageId = existing.messageId || null;
@@ -533,7 +549,8 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       category,
       meta.channelName,
       meta.channelTopic,
-      guildConfig.featureSetup[featureKey]?.channelId
+      guildConfig.featureSetup[featureKey]?.channelId,
+      featureKey === 'popManager' ? ['pop-manager'] : []
     );
 
     featureState = {
@@ -628,6 +645,7 @@ const KNOWN_CHANNEL_NAMES = new Set([
     .map((m) => m.forumName || m.channelName)
     .filter(Boolean),
   // Legacy channels wiped on /setup reset (no longer created)
+  'pop-manager',
   'donation-stats',
   'admin-logging',
   'Admin Logs',
@@ -639,7 +657,7 @@ const KNOWN_CHANNEL_NAMES = new Set([
 module.exports = {
   FEATURE_META,
   TEXT_LIVE_FEATURES,
-  /** @deprecated alias — pop manager is a text channel now */
+  /** @deprecated alias — server status is a text channel now */
   LIVE_BOARD_FEATURES: TEXT_LIVE_FEATURES,
   MAP_FORUM_FEATURES,
   MAP_LOG_FORUM_SPECS,

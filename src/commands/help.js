@@ -36,7 +36,7 @@ module.exports = {
             '• **Server Setup** — Nitrado tokens & sync',
             '• **Server Management** — ping roles for bans/unbans/kicks',
             '• **Customise Bot** — colour & footer (watermark always stays)',
-            '• **Feature Management** — Pop, Ban, Donation, Admin, Chat logs',
+            '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat logs',
             '',
             '`/rewardmanager` — boost rewards hub (enable, channel, amount, type)',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
@@ -55,7 +55,7 @@ module.exports = {
         {
           name: 'Feature setup',
           value:
-            'Run `/setup` first for the category + admin role. Chat, Admin, and Join/Leave logs each use **one Discord forum per map** (forum name = map name) with feature threads inside. Donation stats post daily totals + a trend chart. Pop refreshes every 5m; Admin/Chat every 10m; joins/leaves every 60s.',
+            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Server Status** refreshes every 5m; Admin/Chat every 10m; joins/leaves every 60s.',
         }
       );
 

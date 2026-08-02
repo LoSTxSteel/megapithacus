@@ -7,33 +7,71 @@ const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
 
-function buildPopEmbed(guildConfig, cluster) {
-  const lines = (cluster?.results || []).map((server) => {
-    const status = server.online ? 'Online' : 'Offline';
-    const count = server.online
-      ? `${server.players} / ${server.maxPlayers || '—'}`
-      : server.error
-        ? `error — ${server.error}`
-        : `offline (\`${server.status}\`)`;
-    return `${status} **${server.name}** — ${count}`;
-  });
+function sanitizeInline(value) {
+  return String(value ?? '').replace(/`/g, "'");
+}
 
+function formatCount(players, maxPlayers) {
+  const max = maxPlayers || '—';
+  return `${players}/${max}`;
+}
+
+function formatServerBlock(server) {
+  const icon = server.online ? '🟢' : '🔴';
+  const players = server.online ? Number(server.players) || 0 : 0;
+  const count = formatCount(players, server.maxPlayers);
+  const name = sanitizeInline(server.name || 'Server');
+  const map = sanitizeInline(server.map || 'Unknown');
+
+  return [
+    `${icon} \`${name} - ${count}\``,
+    `Population: ${count}`,
+    `Map: ${map}`,
+  ].join('\n');
+}
+
+function orderedResults(guildConfig, cluster) {
+  const results = cluster?.results || [];
+  if (!results.length) return [];
+
+  const byKey = new Map();
+  for (const result of results) {
+    byKey.set(String(result.serviceId || result.id), result);
+  }
+
+  const ordered = [];
+  const seen = new Set();
+  for (const server of guildConfig.servers || []) {
+    const key = String(server.serviceId || server.id);
+    const result = byKey.get(key);
+    if (result) {
+      ordered.push(result);
+      seen.add(key);
+    }
+  }
+
+  for (const result of results) {
+    const key = String(result.serviceId || result.id);
+    if (!seen.has(key)) ordered.push(result);
+  }
+
+  return ordered;
+}
+
+function buildPopEmbed(guildConfig, cluster) {
+  const blocks = orderedResults(guildConfig, cluster).map(formatServerBlock);
   const description = cluster
-    ? [
-        '**Platform:** Microsoft Store ASE · **Host:** Nitrado',
-        `**Total players:** ${cluster.totalPlayers} / ${cluster.totalSlots || '—'}`,
-        `**Maps online:** ${cluster.onlineMaps} / ${cluster.totalMaps}`,
-        '',
-        ...(lines.length ? lines : ['_No synced servers._']),
-      ].join('\n')
+    ? blocks.length
+      ? blocks.join('\n\n')
+      : '_No synced servers._'
     : '_Unable to query servers. Check Server Setup tokens and sync._';
 
   return brandEmbed(
     new EmbedBuilder()
-      .setTitle(`${guildConfig.clusterName} — Live Population`)
+      .setTitle('Server Status & Population')
       .setDescription(description),
     guildConfig,
-    { accent: true, context: 'Pop · every 5m' }
+    { accent: true, context: 'Server Status · every 5m' }
   );
 }
 
@@ -51,6 +89,10 @@ async function refreshGuildPop(client, guildId) {
 
   const channel = await discordGuild.channels.fetch(channelId).catch(() => null);
   if (!channel?.isTextBased?.()) return;
+
+  if (channel.name === 'pop-manager' && channel.setName) {
+    await channel.setName('server-status').catch(() => null);
+  }
 
   let cluster = null;
   if ((guildConfig.servers || []).length && (guildConfig.nitradoAccounts || []).length) {
@@ -88,7 +130,7 @@ async function refreshGuildPop(client, guildId) {
       });
     }
   } catch (error) {
-    console.warn(`Pop Manager refresh failed for ${guildId}:`, error.message);
+    console.warn(`Server Status refresh failed for ${guildId}:`, error.message);
   }
 }
 
@@ -97,7 +139,7 @@ async function refreshAll(client) {
     try {
       await refreshGuildPop(client, guildId);
     } catch (error) {
-      console.warn(`Pop Manager error (${guildId}):`, error.message);
+      console.warn(`Server Status error (${guildId}):`, error.message);
     }
   }
 }
@@ -106,12 +148,16 @@ function startPopManager(client) {
   if (timer) clearInterval(timer);
   // First refresh shortly after boot, then every 5 minutes.
   setTimeout(() => {
-    refreshAll(client).catch((err) => console.warn('Pop Manager startup refresh:', err.message));
+    refreshAll(client).catch((err) =>
+      console.warn('Server Status startup refresh:', err.message)
+    );
   }, 15_000);
   timer = setInterval(() => {
-    refreshAll(client).catch((err) => console.warn('Pop Manager interval:', err.message));
+    refreshAll(client).catch((err) =>
+      console.warn('Server Status interval:', err.message)
+    );
   }, INTERVAL_MS);
-  console.log('Pop Manager scheduler started (every 5 minutes)');
+  console.log('Server Status scheduler started (every 5 minutes)');
 }
 
 module.exports = {
