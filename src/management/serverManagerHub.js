@@ -16,6 +16,7 @@ const {
   restartGameserver,
   setServerName,
   setServerPassword,
+  queryCluster,
 } = require('../services/nitrado');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
 const { ADMIN_ROLE_NAME } = require('../services/botSetup');
@@ -50,13 +51,39 @@ function serverLabel(server) {
   return String(server?.name || server?.map || server?.serviceId || 'Server').slice(0, 100);
 }
 
-function serversField(servers) {
+/** @returns {'🟢'|'🔴'|'⚪'} */
+function statusIcon(result) {
+  if (!result || result.ok === false) return '⚪';
+  return result.online ? '🟢' : '🔴';
+}
+
+function statusLabel(result) {
+  if (!result || result.ok === false) return 'Status unknown';
+  return result.online ? 'Online' : 'Offline';
+}
+
+async function fetchServerStatuses(guild) {
+  const servers = listServers(guild);
+  const map = new Map();
+  if (!servers.length) return map;
+
+  const { results } = await queryCluster(servers, guild);
+  for (const result of results) {
+    map.set(String(result.serviceId), result);
+  }
+  return map;
+}
+
+function serversField(servers, statusMap) {
   if (!servers.length) {
     return '_No synced servers — use `/management` → Server Setup → Sync servers_';
   }
   return servers
     .slice(0, 20)
-    .map((s) => `• **${serverLabel(s)}** (\`${s.serviceId}\`)`)
+    .map((s) => {
+      const icon = statusIcon(statusMap.get(String(s.serviceId)));
+      return `${icon} **${serverLabel(s)}** (\`${s.serviceId}\`)`;
+    })
     .join('\n')
     .slice(0, 1024);
 }
@@ -71,14 +98,18 @@ function renameLocalServer(guildId, serviceId, name) {
   updateGuild(guildId, { servers });
 }
 
-function serverSelect(guild, selectedId = null) {
+function serverSelect(guild, selectedId = null, statusMap = new Map()) {
   const servers = listServers(guild);
-  const options = servers.slice(0, 25).map((s) => ({
-    label: serverLabel(s),
-    description: `Nitrado \`${s.serviceId}\``.slice(0, 100),
-    value: String(s.serviceId),
-    default: selectedId != null && String(s.serviceId) === String(selectedId),
-  }));
+  const options = servers.slice(0, 25).map((s) => {
+    const icon = statusIcon(statusMap.get(String(s.serviceId)));
+    const base = serverLabel(s);
+    return {
+      label: `${icon} ${base}`.slice(0, 100),
+      description: `Nitrado \`${s.serviceId}\``.slice(0, 100),
+      value: String(s.serviceId),
+      default: selectedId != null && String(s.serviceId) === String(selectedId),
+    };
+  });
 
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -170,7 +201,7 @@ function serverActionButtons(serviceId) {
   ];
 }
 
-function buildServerManagerMessage(
+async function buildServerManagerMessage(
   guildId,
   { selectedId = null, content = null, confirmBulk = null } = {}
 ) {
@@ -178,6 +209,7 @@ function buildServerManagerMessage(
   const servers = listServers(guild);
   const selected =
     selectedId && selectedId !== 'none' ? findServer(guild, selectedId) : null;
+  const statusMap = await fetchServerStatuses(guild);
 
   const lines = [
     'Manage synced **Nitrado** ASE servers — power, password, and display name.',
@@ -195,28 +227,34 @@ function buildServerManagerMessage(
     );
   }
 
+  const selectedResult = selected
+    ? statusMap.get(String(selected.serviceId))
+    : null;
+  const selectedValue = selected
+    ? `${statusIcon(selectedResult)} **${serverLabel(selected)}** (\`${selected.serviceId}\`) — ${statusLabel(selectedResult)}`
+    : servers.length
+      ? '_Pick a server below for controls_'
+      : '_No synced servers_';
+
   const embed = guildEmbed(guild, 'Server Manager', { context: 'Hub' })
     .setDescription(lines.join('\n'))
     .addFields(
       {
         name: 'Servers',
-        value: serversField(servers),
+        value: serversField(servers, statusMap),
       },
       {
         name: 'Selected',
-        value: selected
-          ? `**${serverLabel(selected)}** (\`${selected.serviceId}\`)`
-          : servers.length
-            ? '_Pick a server below for controls_'
-            : '_No synced servers_',
+        value: selectedValue,
       }
     );
 
-  const components = [serverSelect(guild, selected?.serviceId || null)];
+  const components = [serverSelect(guild, selected?.serviceId || null, statusMap)];
 
   if (confirmBulk) {
     components.push(confirmBulkRow(confirmBulk));
-  } else {
+  } else if (!selected) {
+    // Restart all / Stop all only on overview (no server selected)
     components.push(bulkButtons(!servers.length));
   }
 
@@ -293,6 +331,13 @@ async function runBulkPower(guild, action) {
   return parts.join('\n').slice(0, 1800);
 }
 
+async function refreshHub(interaction, guildId, options = {}) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferUpdate();
+  }
+  await interaction.editReply(await buildServerManagerMessage(guildId, options));
+}
+
 /**
  * @returns {Promise<boolean>} true if handled
  */
@@ -308,42 +353,36 @@ async function handleServerManagerInteraction(interaction) {
   const guildId = interaction.guildId;
 
   if (interaction.isButton() && id === `${PREFIX}back`) {
-    await interaction.update(buildServerManagerMessage(guildId));
+    await refreshHub(interaction, guildId);
     return true;
   }
 
   if (interaction.isStringSelectMenu() && id === `${PREFIX}pick`) {
     const serviceId = interaction.values[0];
-    await interaction.update(
-      buildServerManagerMessage(guildId, {
-        selectedId: serviceId === 'none' ? null : serviceId,
-      })
-    );
+    await refreshHub(interaction, guildId, {
+      selectedId: serviceId === 'none' ? null : serviceId,
+    });
     return true;
   }
 
   if (interaction.isButton() && id === `${PREFIX}bulk:cancel`) {
-    await interaction.update(buildServerManagerMessage(guildId));
+    await refreshHub(interaction, guildId);
     return true;
   }
 
   if (interaction.isButton() && id === `${PREFIX}bulk:restart`) {
-    await interaction.update(
-      buildServerManagerMessage(guildId, {
-        confirmBulk: 'restart',
-        content: 'Confirm **Restart all** — this affects every synced server.',
-      })
-    );
+    await refreshHub(interaction, guildId, {
+      confirmBulk: 'restart',
+      content: 'Confirm **Restart all** — this affects every synced server.',
+    });
     return true;
   }
 
   if (interaction.isButton() && id === `${PREFIX}bulk:stop`) {
-    await interaction.update(
-      buildServerManagerMessage(guildId, {
-        confirmBulk: 'stop',
-        content: 'Confirm **Stop all** — this affects every synced server.',
-      })
-    );
+    await refreshHub(interaction, guildId, {
+      confirmBulk: 'stop',
+      content: 'Confirm **Stop all** — this affects every synced server.',
+    });
     return true;
   }
 
@@ -355,7 +394,7 @@ async function handleServerManagerInteraction(interaction) {
     await interaction.deferUpdate();
     const summary = await runBulkPower(getGuild(guildId), action);
     await interaction.editReply(
-      buildServerManagerMessage(guildId, { content: summary })
+      await buildServerManagerMessage(guildId, { content: summary })
     );
     return true;
   }
@@ -388,14 +427,14 @@ async function handleServerManagerInteraction(interaction) {
       else await restartGameserver(serviceId, token);
 
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: `Sent **${action}** to **${serverLabel(server)}**.`,
         })
       );
     } catch (error) {
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: `${action} failed: ${error.message}`,
         })
@@ -452,7 +491,7 @@ async function handleServerManagerInteraction(interaction) {
     try {
       await setServerPassword(serviceId, token, password);
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: password
             ? `Updated join password on **${serverLabel(server)}**.`
@@ -461,7 +500,7 @@ async function handleServerManagerInteraction(interaction) {
       );
     } catch (error) {
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: `Set password failed: ${error.message}`,
         })
@@ -498,14 +537,14 @@ async function handleServerManagerInteraction(interaction) {
       await setServerName(serviceId, token, name);
       renameLocalServer(guildId, serviceId, name);
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: `Updated name to **${name.slice(0, 80)}**.`,
         })
       );
     } catch (error) {
       await interaction.editReply(
-        buildServerManagerMessage(guildId, {
+        await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: `Change name failed: ${error.message}`,
         })

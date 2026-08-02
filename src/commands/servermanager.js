@@ -24,6 +24,7 @@ module.exports = {
       return;
     }
 
-    await interaction.reply(buildServerManagerMessage(interaction.guildId));
+    await interaction.deferReply({ ephemeral: true });
+    await interaction.editReply(await buildServerManagerMessage(interaction.guildId));
   },
 };
