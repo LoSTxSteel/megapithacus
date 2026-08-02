@@ -1,6 +1,6 @@
 const DM_DELETE_AFTER_MS = 5 * 60 * 1000;
 
-/** Message IDs that must not auto-delete (e.g. announcements) */
+/** Message IDs that must not auto-delete */
 const persistentDmIds = new Set();
 
 function markDmPersistent(messageOrId) {
@@ -10,15 +10,12 @@ function markDmPersistent(messageOrId) {
 
 function isDmPersistent(message) {
   if (!message) return false;
-  if (persistentDmIds.has(message.id)) return true;
-  const footer = message.embeds?.[0]?.footer?.text || '';
-  const title = message.embeds?.[0]?.title || '';
-  return /Announce/i.test(footer) || /^Announcement:/i.test(title);
+  return persistentDmIds.has(message.id);
 }
 
 /**
  * Delete a bot DM message after a delay (default 5 minutes).
- * Skips announcement / marked persistent DMs.
+ * Skips marked persistent DMs.
  */
 function scheduleDmDelete(message, delayMs = DM_DELETE_AFTER_MS) {
   if (!message || typeof message.delete !== 'function') return;

@@ -111,7 +111,7 @@ function brandEmbed(embed, guild = null, options = {}) {
     options.thumbnail === true ||
     (options.thumbnail !== false &&
       context &&
-      /^(Hub|Help|Customise|Donations|Credits|Rewards|Boost rewards|Player DB|Deploy|Feature board|Announce)/i.test(
+      /^(Hub|Help|Customise|Donations|Credits|Rewards|Boost rewards|Player DB|Deploy|Feature board)/i.test(
         context
       ));
   if (wantThumb && icon && !embed.data.thumbnail) {

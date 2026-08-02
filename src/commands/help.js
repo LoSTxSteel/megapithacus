@@ -22,15 +22,11 @@ module.exports = {
           value: [
             '`/help` — this message',
             '`/credit` — view your seasonal & permanent credit',
-            '`/notify` — opt in to announcement DMs (discounts, updates)',
-            '`/unnotify` — opt out of announcement DMs',
-            '`/subscribe` — subscribe info (currently under maintenance)',
           ].join('\n'),
         },
         {
           name: 'Admins',
           value: [
-            '`/announce` — DM players who used `/notify` (discounts, updates, other)',
             '`/setup` — wipe & recreate logging channels + **Megapithacus** admin role (server power)',
             '`/management` — admin hub:',
             '• **Admin Management** — authorised admins & event staff',
