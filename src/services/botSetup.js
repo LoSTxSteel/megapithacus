@@ -181,6 +181,7 @@ async function wipeBotChannels(discordGuild, guildConfig) {
       adminLogging: { forumId: null, ready: false, threads: {} },
       chatLogs: { forumId: null, ready: false, threads: {} },
       joinLeaveLogs: { forumId: null, ready: false, threads: {} },
+      gamerscoreDetection: { channelId: null, ready: false },
     },
     features: {
       popManager: false,
@@ -189,6 +190,7 @@ async function wipeBotChannels(discordGuild, guildConfig) {
       adminLogging: false,
       chatLogs: false,
       joinLeaveLogs: false,
+      gamerscoreDetection: false,
     },
   });
 

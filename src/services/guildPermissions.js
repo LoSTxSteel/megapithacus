@@ -26,6 +26,12 @@ const PERMISSION_AREAS = {
     description: 'Add, remove, wipe, and view player credits',
     commandHint: '`/creditmanager` or `/creditview`',
   },
+  gamerscoreManager: {
+    key: 'gamerscoreManager',
+    label: 'Gamerscore manager',
+    description: 'Configure Xbox gamerscore join checks and punishments',
+    commandHint: '`/gamerscoremanager`',
+  },
 };
 
 function defaultPermissions() {
@@ -34,6 +40,7 @@ function defaultPermissions() {
     serverPower: [],
     rewardManager: [],
     creditManager: [],
+    gamerscoreManager: [],
   };
 }
 
@@ -46,6 +53,7 @@ function getPermissions(guildId) {
     serverPower: [...(guild.permissions?.serverPower || [])],
     rewardManager: [...(guild.permissions?.rewardManager || [])],
     creditManager: [...(guild.permissions?.creditManager || [])],
+    gamerscoreManager: [...(guild.permissions?.gamerscoreManager || [])],
   };
 }
 
@@ -120,6 +128,10 @@ function canManageCredits(interaction) {
   return canAccessArea(interaction, 'creditManager');
 }
 
+function canManageGamerscore(interaction) {
+  return canAccessArea(interaction, 'gamerscoreManager');
+}
+
 function formatAreaRoles(guildId, areaKey) {
   const roles = getPermissions(guildId)[areaKey] || [];
   if (!roles.length) {
@@ -141,5 +153,6 @@ module.exports = {
   canManageServerPower,
   canManageRewards,
   canManageCredits,
+  canManageGamerscore,
   formatAreaRoles,
 };

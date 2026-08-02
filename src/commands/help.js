@@ -36,12 +36,13 @@ module.exports = {
             '• **Server Setup** — Nitrado tokens & sync',
             '• **Server Management** — ping roles for bans/unbans/kicks',
             '• **Customise Bot** — colour & footer (watermark always stays)',
-            '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat logs',
+            '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat, Join/Leave, Gamerscore',
             '',
             '`/rewardmanager` — boost rewards hub (enable, channel, amount, type)',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
             "`/creditview` — view another user's credit balance",
             '`/servermanager` — Nitrado hub (start/stop/restart, password, name)',
+            '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/player search` — find players (ban/unban/kick on profile)',
@@ -50,12 +51,12 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — set which roles can use Donations / Rewards / Credits / Server power (owner only)',
+            '`/permissions` — set which roles can use Donations / Rewards / Credits / Gamerscore / Server power (owner only)',
         },
         {
           name: 'Feature setup',
           value:
-            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Server Status** refreshes every 5m; Admin/Chat every 5m; joins/leaves every 60s.',
+            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Gamerscore Detection** uses `#gamerscore-detection` (needs `OPENXBL_API_KEY`). **Server Status** refreshes every 5m; Admin/Chat every 5m; joins/leaves every 60s.',
         }
       );
 

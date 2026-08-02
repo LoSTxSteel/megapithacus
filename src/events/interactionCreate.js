@@ -59,6 +59,18 @@ function tryServerManagerHubInteraction(interaction) {
   }
 }
 
+function tryGamerscoreHubInteraction(interaction) {
+  try {
+    const {
+      handleGamerscoreManagerInteraction,
+    } = require('../management/gamerscoreHub');
+    return handleGamerscoreManagerInteraction(interaction);
+  } catch (error) {
+    console.warn('Gamerscore hub unavailable:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
@@ -106,6 +118,10 @@ module.exports = {
       }
 
       if (await tryServerManagerHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryGamerscoreHubInteraction(interaction)) {
         return;
       }
 

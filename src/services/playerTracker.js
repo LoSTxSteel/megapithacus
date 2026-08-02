@@ -8,6 +8,7 @@ const {
 } = require('./playerDb');
 const { postJoinLeave } = require('./joinLeaveLog');
 const { ensureMapForums, isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
+const { handleGamerscoreJoin } = require('./gamerscoreDetection');
 
 const INTERVAL_MS = 60 * 1000;
 let timer = null;
@@ -24,9 +25,12 @@ async function scanGuild(client, guildId) {
   let discordGuild = null;
   const wantsJoinLeave =
     isFeatureEnabled(guild, 'joinLeaveLogs') && isFeatureConfigured(guild, 'joinLeaveLogs');
-  if (wantsJoinLeave && client) {
+  const wantsGamerscore =
+    isFeatureEnabled(guild, 'gamerscoreDetection') &&
+    isFeatureConfigured(guild, 'gamerscoreDetection');
+  if ((wantsJoinLeave || wantsGamerscore) && client) {
     discordGuild = await client.guilds.fetch(guildId).catch(() => null);
-    if (discordGuild) {
+    if (discordGuild && wantsJoinLeave) {
       await ensureMapForums(discordGuild, getGuild(guildId)).catch(() => null);
     }
   }
@@ -67,13 +71,25 @@ async function scanGuild(client, guildId) {
       const isJoin = !isBootstrap && key && !prev.has(key);
       const profile = upsertPlayer(guildId, normalized, { joined: isJoin });
 
-      if (isJoin && discordGuild && wantsJoinLeave) {
-        await postJoinLeave(discordGuild, guildId, serviceId, {
-          type: 'join',
-          profile,
-          mapName,
-          serverName: server.name,
-        }).catch((err) => console.warn('Join log failed:', err.message));
+      if (isJoin && discordGuild) {
+        if (wantsJoinLeave) {
+          await postJoinLeave(discordGuild, guildId, serviceId, {
+            type: 'join',
+            profile,
+            mapName,
+            serverName: server.name,
+          }).catch((err) => console.warn('Join log failed:', err.message));
+        }
+        if (wantsGamerscore) {
+          await handleGamerscoreJoin(discordGuild, guildId, {
+            profile,
+            mapName,
+            serverName: server.name,
+            serviceId,
+          }).catch((err) =>
+            console.warn('Gamerscore detection failed:', err.message)
+          );
+        }
       }
     }
 

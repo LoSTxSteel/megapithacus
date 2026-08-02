@@ -45,4 +45,6 @@ module.exports = {
     store: 'Microsoft Store',
     host: 'Nitrado',
   },
+  /** OpenXBL key for Xbox gamerscore lookups (optional; feature fail-opens without it) */
+  openxblApiKey: process.env.OPENXBL_API_KEY || process.env.XBOX_API_KEY || null,
 };

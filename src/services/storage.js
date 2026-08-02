@@ -24,6 +24,15 @@ function writeAll(data) {
   fs.writeFileSync(GUILDS_FILE, JSON.stringify(data, null, 2));
 }
 
+function defaultGamerscoreDetection() {
+  return {
+    minScore: 0,
+    punishment: 'kick',
+    durationMinutes: 60,
+    logPasses: false,
+  };
+}
+
 function defaultFeatureSetup() {
   return {
     categoryId: null,
@@ -34,6 +43,7 @@ function defaultFeatureSetup() {
     adminLogging: { forumId: null, ready: false, threads: {} },
     chatLogs: { forumId: null, ready: false, threads: {} },
     joinLeaveLogs: { forumId: null, ready: false, threads: {} },
+    gamerscoreDetection: { channelId: null, ready: false },
     /** @deprecated legacy per-map forums — cleared on ensure/setup */
     mapForums: {},
   };
@@ -85,8 +95,10 @@ function defaultGuild() {
       adminLogging: false,
       chatLogs: false,
       joinLeaveLogs: false,
+      gamerscoreDetection: false,
     },
     featureSetup: defaultFeatureSetup(),
+    gamerscoreDetection: defaultGamerscoreDetection(),
     botSetupRoleId: null,
     botCustom: defaultBotCustom(),
     pingRoles: defaultPingRoles(),
@@ -95,6 +107,7 @@ function defaultGuild() {
       serverPower: [],
       rewardManager: [],
       creditManager: [],
+      gamerscoreManager: [],
     },
     credits: defaultCredits(),
     rewards: defaultRewards(),
@@ -205,6 +218,11 @@ function getGuild(guildId) {
       serverPower: current.permissions?.serverPower || [],
       rewardManager: current.permissions?.rewardManager || [],
       creditManager: current.permissions?.creditManager || [],
+      gamerscoreManager: current.permissions?.gamerscoreManager || [],
+    },
+    gamerscoreDetection: {
+      ...defaults.gamerscoreDetection,
+      ...(current.gamerscoreDetection || {}),
     },
     credits: {
       ...defaults.credits,
@@ -275,6 +293,13 @@ function updateGuild(guildId, patch) {
     next.rewards = {
       ...(current.rewards || {}),
       ...patch.rewards,
+    };
+  }
+  if (patch.gamerscoreDetection) {
+    next.gamerscoreDetection = {
+      ...defaultGamerscoreDetection(),
+      ...(current.gamerscoreDetection || {}),
+      ...patch.gamerscoreDetection,
     };
   }
   if (patch.donations) {
@@ -465,4 +490,5 @@ module.exports = {
   defaultPingRoles,
   defaultCredits,
   defaultRewards,
+  defaultGamerscoreDetection,
 };

@@ -8,6 +8,9 @@ const CATEGORY_NAME = 'Megapithacus';
 /** Live embed posted in a text channel (cluster-wide) */
 const TEXT_LIVE_FEATURES = new Set(['popManager']);
 
+/** Plain text log channel (no live board message) */
+const TEXT_LOG_FEATURES = new Set(['gamerscoreDetection']);
+
 /**
  * Three Discord forums (Admin / Chat / Join-Leave). Each holds one thread per map.
  */
@@ -95,6 +98,16 @@ const FEATURE_META = {
     forumTopic: MAP_LOG_FORUM_SPECS.joinLeaveLogs.forumTopic,
     refreshMinutes: null,
     perMap: true,
+  },
+  gamerscoreDetection: {
+    key: 'gamerscoreDetection',
+    label: 'Gamerscore Detection',
+    short:
+      'Check Xbox gamerscore on map join — kick/ban below minimum; logs to #gamerscore-detection',
+    channelName: 'gamerscore-detection',
+    channelTopic:
+      'Xbox gamerscore join checks — passes, fails, and verify errors from Megapithacus.',
+    refreshMinutes: null,
   },
 };
 
@@ -562,6 +575,19 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
         },
       })),
     };
+  } else if (TEXT_LOG_FEATURES.has(featureKey)) {
+    channel = await ensureTextChannel(
+      discordGuild,
+      category,
+      meta.channelName,
+      meta.channelTopic,
+      guildConfig.featureSetup[featureKey]?.channelId
+    );
+    featureState = {
+      ...featureState,
+      channelId: channel.id,
+      ready: true,
+    };
   } else {
     forum = await ensureForum(
       discordGuild,
@@ -610,6 +636,9 @@ function isFeatureConfigured(guild, key) {
     const destId = setup.channelId || setup.threadId;
     return Boolean(destId && setup.messageId);
   }
+  if (TEXT_LOG_FEATURES.has(key)) {
+    return Boolean(setup.ready && setup.channelId);
+  }
   return Boolean(setup.forumId);
 }
 
@@ -657,6 +686,7 @@ const KNOWN_CHANNEL_NAMES = new Set([
 module.exports = {
   FEATURE_META,
   TEXT_LIVE_FEATURES,
+  TEXT_LOG_FEATURES,
   /** @deprecated alias — server status is a text channel now */
   LIVE_BOARD_FEATURES: TEXT_LIVE_FEATURES,
   MAP_FORUM_FEATURES,

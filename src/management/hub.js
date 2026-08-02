@@ -356,6 +356,16 @@ function featureSetupText(guild, key) {
     const popDest = featureState.channelId || featureState.threadId;
     extras.push(`Live channel: ${popDest ? `<#${popDest}>` : '_Not created_'}`);
   }
+  if (key === 'gamerscoreDetection') {
+    const gs = guild.gamerscoreDetection || {};
+    extras.push('Checks Xbox gamerscore when a player joins a map (60s poll).');
+    extras.push(
+      `Minimum: **${Math.max(0, Number(gs.minScore) || 0)}** · Punishment: **${
+        gs.punishment === 'ban' ? 'ban' : 'kick'
+      }**`
+    );
+    extras.push('Configure thresholds with `/gamerscoremanager`. Needs `OPENXBL_API_KEY`.');
+  }
 
   const destLine = FEATURE_META[key]?.perMap
     ? `Forum: ${

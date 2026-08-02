@@ -7,6 +7,7 @@ const REQUIRED_COMMANDS = [
   'creditmanager',
   'rewardmanager',
   'servermanager',
+  'gamerscoremanager',
 ];
 
 /**
