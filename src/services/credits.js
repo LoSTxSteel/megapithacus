@@ -17,6 +17,7 @@ function defaultRewards() {
     boostEnabled: false,
     boostChannelId: null,
     boostSeasonalAmount: 3,
+    boostCreditType: 'seasonal',
   };
 }
 
@@ -28,12 +29,21 @@ function getCredits(guildId) {
   };
 }
 
+function normalizeBoostCreditType(type) {
+  return type === 'permanent' ? 'permanent' : 'seasonal';
+}
+
 function getRewards(guildId) {
   const guild = getGuild(guildId);
-  return {
+  const merged = {
     ...defaultRewards(),
     ...(guild.rewards || {}),
   };
+  const amount = Number(merged.boostSeasonalAmount);
+  merged.boostSeasonalAmount =
+    Number.isFinite(amount) && amount >= 0 ? Math.floor(amount) : 3;
+  merged.boostCreditType = normalizeBoostCreditType(merged.boostCreditType);
+  return merged;
 }
 
 function saveCredits(guildId, credits) {
@@ -71,6 +81,14 @@ function parseAmount(amount) {
   const n = Number(amount);
   if (!Number.isFinite(n) || n <= 0) {
     return { ok: false, error: 'Amount must be a positive number.' };
+  }
+  return { ok: true, amount: Math.floor(n) };
+}
+
+function parseNonNegativeAmount(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, error: 'Amount must be zero or a positive number.' };
   }
   return { ok: true, amount: Math.floor(n) };
 }
@@ -149,15 +167,21 @@ function tryCreditBoost(guildId, userId, premiumSinceTimestamp) {
 
   const rewards = getRewards(guildId);
   const amount = Math.max(0, Number(rewards.boostSeasonalAmount) || 3);
+  const type = normalizeBoostCreditType(rewards.boostCreditType);
+  if (amount <= 0) {
+    return { ok: false, reason: 'zero_amount' };
+  }
+
   const next = {
     ...current,
-    seasonal: current.seasonal + amount,
+    [type]: current[type] + amount,
     lastBoostCreditPremiumSince: key,
   };
   setUserCredits(guildId, userId, next);
   return {
     ok: true,
     amount,
+    type,
     credits: getUserCredits(guildId, userId),
   };
 }
@@ -176,6 +200,24 @@ function setBoostChannel(guildId, channelId) {
   return getRewards(guildId);
 }
 
+function setBoostAmount(guildId, amount) {
+  const parsed = parseNonNegativeAmount(amount);
+  if (!parsed.ok) return parsed;
+  const rewards = getRewards(guildId);
+  rewards.boostSeasonalAmount = parsed.amount;
+  saveRewards(guildId, rewards);
+  return { ok: true, rewards: getRewards(guildId) };
+}
+
+function setBoostCreditType(guildId, type) {
+  const typeCheck = assertType(type);
+  if (!typeCheck.ok) return typeCheck;
+  const rewards = getRewards(guildId);
+  rewards.boostCreditType = type;
+  saveRewards(guildId, rewards);
+  return { ok: true, rewards: getRewards(guildId) };
+}
+
 module.exports = {
   defaultCredits,
   defaultRewards,
@@ -190,4 +232,6 @@ module.exports = {
   tryCreditBoost,
   setBoostEnabled,
   setBoostChannel,
+  setBoostAmount,
+  setBoostCreditType,
 };

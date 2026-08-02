@@ -69,6 +69,7 @@ function defaultRewards() {
     boostEnabled: false,
     boostChannelId: null,
     boostSeasonalAmount: 3,
+    boostCreditType: 'seasonal',
   };
 }
 

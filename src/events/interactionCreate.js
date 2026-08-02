@@ -29,6 +29,26 @@ function tryDonateHubInteraction(interaction) {
   }
 }
 
+function tryCreditHubInteraction(interaction) {
+  try {
+    const { handleCreditManagerInteraction } = require('../management/creditHub');
+    return handleCreditManagerInteraction(interaction);
+  } catch (error) {
+    console.warn('Credit hub unavailable:', error.message);
+    return false;
+  }
+}
+
+function tryRewardHubInteraction(interaction) {
+  try {
+    const { handleRewardManagerInteraction } = require('../management/rewardHub');
+    return handleRewardManagerInteraction(interaction);
+  } catch (error) {
+    console.warn('Reward hub unavailable:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
@@ -64,6 +84,14 @@ module.exports = {
       }
 
       if (await tryDonateHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryCreditHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryRewardHubInteraction(interaction)) {
         return;
       }
 

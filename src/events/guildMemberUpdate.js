@@ -32,13 +32,14 @@ module.exports = {
       if (!channel || typeof channel.send !== 'function') return;
 
       const guild = getGuild(guildId);
+      const creditType = result.type === 'permanent' ? 'permanent' : 'seasonal';
       const embed = brandEmbed(
         new EmbedBuilder()
           .setTitle('Thanks for the boost!')
           .setDescription(
             [
               `Thank you <@${newMember.id}> for boosting the server!`,
-              `You've been granted +\`${result.amount}\` seasonal credit.`,
+              `You've been granted +\`${result.amount}\` ${creditType} credit.`,
             ].join('\n')
           ),
         guild,
