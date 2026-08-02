@@ -47,10 +47,10 @@ async function apiRequest(method, path, token, formFields = null) {
   }
 
   if (!res.ok) {
-    const msg =
-      body?.message ||
-      body?.data?.message ||
-      `Nitrado API ${res.status} ${method} ${path}`;
+    const apiMsg = body?.message || body?.data?.message;
+    const msg = apiMsg
+      ? `${apiMsg} (${res.status} ${method} ${path})`
+      : `Nitrado API ${res.status} ${method} ${path}`;
     throw new NitradoError(msg, res.status);
   }
 
@@ -120,25 +120,84 @@ async function sendCommand(serviceId, token, command) {
   });
 }
 
-/** @param {'start'|'stop'|'restart'} action */
+/**
+ * Power control against real NitrAPI routes (official PHP SDK):
+ * - start:   POST /services/{id}/gameservers/games/start  body: game=<folder short>
+ * - stop:    POST /services/{id}/gameservers/stop
+ * - restart: POST /services/{id}/gameservers/restart
+ * There is no POST /gameservers/start — that path 404s.
+ *
+ * @param {'start'|'stop'|'restart'} action
+ */
 async function gameserverPower(serviceId, token, action) {
-  const allowed = new Set(['start', 'stop', 'restart']);
-  if (!allowed.has(action)) {
-    throw new NitradoError(`Unknown power action: ${action}`, 400);
-  }
-  return apiPost(`/services/${serviceId}/gameservers/${action}`, token);
+  if (action === 'start') return startGameserver(serviceId, token);
+  if (action === 'stop') return stopGameserver(serviceId, token);
+  if (action === 'restart') return restartGameserver(serviceId, token);
+  throw new NitradoError(`Unknown power action: ${action}`, 400);
 }
 
-async function startGameserver(serviceId, token) {
-  return gameserverPower(serviceId, token, 'start');
+/**
+ * Start the installed game on a service.
+ * Nitrado requires the game folder short (e.g. arkxb), from gameserver.game.
+ * @param {string} [gameShort] Optional override; otherwise fetched live.
+ */
+async function startGameserver(serviceId, token, gameShort = null) {
+  let game = gameShort ? String(gameShort) : null;
+  if (!game) {
+    const gameserver = await getGameserver(serviceId, token);
+    game = gameserver?.game ? String(gameserver.game) : null;
+  }
+  if (!game) {
+    throw new NitradoError(
+      `Cannot start service ${serviceId}: Nitrado did not return gameserver.game (folder short).`,
+      400
+    );
+  }
+
+  try {
+    return await apiPost(`/services/${serviceId}/gameservers/games/start`, token, {
+      game,
+    });
+  } catch (error) {
+    if (error instanceof NitradoError && error.status === 404) {
+      throw new NitradoError(
+        `Start failed (404) for service ${serviceId} game "${game}". ` +
+          'Expected POST /services/{id}/gameservers/games/start — confirm service ID and that the game is installed.',
+        404
+      );
+    }
+    throw error;
+  }
 }
 
 async function stopGameserver(serviceId, token) {
-  return gameserverPower(serviceId, token, 'stop');
+  try {
+    return await apiPost(`/services/${serviceId}/gameservers/stop`, token);
+  } catch (error) {
+    if (error instanceof NitradoError && error.status === 404) {
+      throw new NitradoError(
+        `Stop failed (404) for service ${serviceId}. ` +
+          'Expected POST /services/{id}/gameservers/stop — confirm the service ID.',
+        404
+      );
+    }
+    throw error;
+  }
 }
 
 async function restartGameserver(serviceId, token) {
-  return gameserverPower(serviceId, token, 'restart');
+  try {
+    return await apiPost(`/services/${serviceId}/gameservers/restart`, token);
+  } catch (error) {
+    if (error instanceof NitradoError && error.status === 404) {
+      throw new NitradoError(
+        `Restart failed (404) for service ${serviceId}. ` +
+          'Expected POST /services/{id}/gameservers/restart — confirm the service ID.',
+        404
+      );
+    }
+    throw error;
+  }
 }
 
 /**
