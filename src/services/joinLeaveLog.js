@@ -6,56 +6,73 @@ const {
   getMapFeatureThread,
 } = require('./featureSetup');
 const { brandEmbed } = require('../utils/embeds');
+const { brand } = require('../config');
 
-function playerLabel(profile) {
-  const ign = profile.characterName || profile.gamertag || 'Unknown';
-  const tag = profile.gamertag && profile.gamertag !== ign ? ` (\`${profile.gamertag}\`)` : '';
-  return `**${ign}**${tag}`;
+const JOIN_COLOR = 0x2ecc71;
+const LEAVE_COLOR = 0xe74c3c;
+
+function playerName(profile) {
+  const raw = profile?.characterName || profile?.gamertag || 'Unknown';
+  return String(raw).replace(/`/g, '').slice(0, 64) || 'Unknown';
 }
 
-function buildJoinEmbed(guild, profile, mapName) {
+function formatFooterStamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function buildJoinLeaveFooter(serverName, serviceId) {
+  const name = String(serverName || 'Server').slice(0, 180);
+  const id = String(serviceId || '—');
+  return `Server: ${name}\nID: ${id} - ${brand.name} - ${formatFooterStamp()}`;
+}
+
+/**
+ * Overseer-style Join/Leave Logs embed (one event per message).
+ * Green accent = joined, red accent = left.
+ */
+function buildJoinLeaveEmbed(guild, { type, profile, serverName, serviceId, at = Date.now() }) {
+  const verb = type === 'leave' ? 'left' : 'joined';
+  const unix = Math.floor(Number(at) / 1000) || Math.floor(Date.now() / 1000);
+  const line = `<t:${unix}:R> - \`${playerName(profile)}\` ${verb}`;
+
   return brandEmbed(
-    new EmbedBuilder()
-      .setTitle('Player joined')
-      .setDescription(`${playerLabel(profile)} joined **${mapName}**.`)
-      .addFields(
-        { name: 'Gamertag', value: profile.gamertag || '—', inline: true },
-        { name: 'In-game name', value: profile.characterName || '—', inline: true },
-        {
-          name: 'Specimen Implant',
-          value: profile.specimenImplant ? `\`${profile.specimenImplant}\`` : '—',
-          inline: true,
-        },
-        { name: 'Tribe', value: profile.tribeName || '—', inline: true },
-        { name: 'Map', value: mapName || '—', inline: true }
-      ),
+    new EmbedBuilder().setTitle('Join/Leave Logs').setDescription(line),
     guild,
-    { context: 'Join / Leave' }
+    {
+      color: type === 'leave' ? LEAVE_COLOR : JOIN_COLOR,
+      author: false,
+      timestamp: false,
+      footer: buildJoinLeaveFooter(serverName, serviceId),
+      context: 'Join / Leave',
+    }
   );
 }
 
-function buildLeaveEmbed(guild, profile, mapName) {
-  return brandEmbed(
-    new EmbedBuilder()
-      .setTitle('Player left')
-      .setDescription(`${playerLabel(profile)} left **${mapName}**.`)
-      .addFields(
-        { name: 'Gamertag', value: profile.gamertag || '—', inline: true },
-        { name: 'In-game name', value: profile.characterName || '—', inline: true },
-        {
-          name: 'Specimen Implant',
-          value: profile.specimenImplant ? `\`${profile.specimenImplant}\`` : '—',
-          inline: true,
-        },
-        { name: 'Tribe', value: profile.tribeName || '—', inline: true },
-        { name: 'Map', value: mapName || '—', inline: true }
-      ),
-    guild,
-    { context: 'Join / Leave' }
-  );
+function buildJoinEmbed(guild, profile, serverName, serviceId) {
+  return buildJoinLeaveEmbed(guild, {
+    type: 'join',
+    profile,
+    serverName,
+    serviceId,
+  });
 }
 
-async function postJoinLeave(discordGuild, guildId, serviceId, { type, profile, mapName }) {
+function buildLeaveEmbed(guild, profile, serverName, serviceId) {
+  return buildJoinLeaveEmbed(guild, {
+    type: 'leave',
+    profile,
+    serverName,
+    serviceId,
+  });
+}
+
+async function postJoinLeave(
+  discordGuild,
+  guildId,
+  serviceId,
+  { type, profile, mapName, serverName }
+) {
   const guild = getGuild(guildId);
   if (!isFeatureEnabled(guild, 'joinLeaveLogs') || !isFeatureConfigured(guild, 'joinLeaveLogs')) {
     return { ok: false, reason: 'disabled' };
@@ -67,10 +84,13 @@ async function postJoinLeave(discordGuild, guildId, serviceId, { type, profile, 
   const thread = await discordGuild.channels.fetch(entry.threadId).catch(() => null);
   if (!thread) return { ok: false, reason: 'missing_thread' };
 
-  const embed =
-    type === 'leave'
-      ? buildLeaveEmbed(guild, profile, mapName)
-      : buildJoinEmbed(guild, profile, mapName);
+  const footerServer = serverName || mapName || 'Server';
+  const embed = buildJoinLeaveEmbed(guild, {
+    type,
+    profile,
+    serverName: footerServer,
+    serviceId,
+  });
 
   await thread.send({ embeds: [embed] });
   return { ok: true };
@@ -78,6 +98,9 @@ async function postJoinLeave(discordGuild, guildId, serviceId, { type, profile, 
 
 module.exports = {
   postJoinLeave,
+  buildJoinLeaveEmbed,
   buildJoinEmbed,
   buildLeaveEmbed,
+  JOIN_COLOR,
+  LEAVE_COLOR,
 };

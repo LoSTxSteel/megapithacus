@@ -72,6 +72,7 @@ async function scanGuild(client, guildId) {
           type: 'join',
           profile,
           mapName,
+          serverName: server.name,
         }).catch((err) => console.warn('Join log failed:', err.message));
       }
     }
@@ -83,6 +84,7 @@ async function scanGuild(client, guildId) {
           type: 'leave',
           profile,
           mapName: profile.map || mapName,
+          serverName: server.name,
         }).catch((err) => console.warn('Leave log failed:', err.message));
       }
     }
