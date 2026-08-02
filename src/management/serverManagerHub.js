@@ -525,17 +525,32 @@ async function handleServerManagerInteraction(interaction) {
     const token = tokenForServer(server, guild);
     await interaction.deferUpdate();
 
+    if (!token) {
+      await interaction.editReply(
+        await buildServerManagerMessage(guildId, {
+          selectedId: serviceId,
+          content:
+            'Set join password failed: No Nitrado token for this server. Add one in Server Setup.',
+        })
+      );
+      return true;
+    }
+
     try {
       await setServerPassword(serviceId, token, password);
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: password
-            ? `Updated join password on **${serverLabel(server)}**.`
-            : `Cleared join password on **${serverLabel(server)}**.`,
+            ? `Updated join password on **${serverLabel(server)}** (Nitrado settings). Restart if it does not apply live.`
+            : `Cleared join password on **${serverLabel(server)}** (Nitrado settings). Restart if it does not apply live.`,
         })
       );
     } catch (error) {
+      console.error(
+        `[servermanager] set join password failed service=${serviceId}:`,
+        error.message
+      );
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
@@ -562,17 +577,32 @@ async function handleServerManagerInteraction(interaction) {
     const token = tokenForServer(server, guild);
     await interaction.deferUpdate();
 
+    if (!token) {
+      await interaction.editReply(
+        await buildServerManagerMessage(guildId, {
+          selectedId: serviceId,
+          content:
+            'Set admin password failed: No Nitrado token for this server. Add one in Server Setup.',
+        })
+      );
+      return true;
+    }
+
     try {
       await setAdminPassword(serviceId, token, password);
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
           content: password
-            ? `Updated admin password on **${serverLabel(server)}**.`
-            : `Cleared admin password on **${serverLabel(server)}**.`,
+            ? `Updated admin password on **${serverLabel(server)}** (Nitrado settings). Restart if it does not apply live.`
+            : `Cleared admin password on **${serverLabel(server)}** (Nitrado settings). Restart if it does not apply live.`,
         })
       );
     } catch (error) {
+      console.error(
+        `[servermanager] set admin password failed service=${serviceId}:`,
+        error.message
+      );
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
@@ -607,16 +637,31 @@ async function handleServerManagerInteraction(interaction) {
     const token = tokenForServer(server, guild);
     await interaction.deferUpdate();
 
+    if (!token) {
+      await interaction.editReply(
+        await buildServerManagerMessage(guildId, {
+          selectedId: serviceId,
+          content:
+            'Change name failed: No Nitrado token for this server. Add one in Server Setup.',
+        })
+      );
+      return true;
+    }
+
     try {
       await setServerName(serviceId, token, name);
       renameLocalServer(guildId, serviceId, name);
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,
-          content: `Updated name to **${name.slice(0, 80)}**.`,
+          content: `Updated Nitrado name to **${name.slice(0, 80)}**. Restart if the browser name does not refresh.`,
         })
       );
     } catch (error) {
+      console.error(
+        `[servermanager] change name failed service=${serviceId}:`,
+        error.message
+      );
       await interaction.editReply(
         await buildServerManagerMessage(guildId, {
           selectedId: serviceId,

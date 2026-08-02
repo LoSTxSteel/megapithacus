@@ -33,6 +33,7 @@ async function apiRequest(method, path, token, formFields = null) {
   const options = { method, headers };
 
   if (formFields && Object.keys(formFields).length) {
+    // Official NitrAPI-PHP uses Guzzle form_params (x-www-form-urlencoded).
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     options.body = new URLSearchParams(formFields).toString();
   }
@@ -46,12 +47,34 @@ async function apiRequest(method, path, token, formFields = null) {
     body = null;
   }
 
+  // Nitrado often returns HTTP 200 with JSON { status: "error", message }.
+  // Official PHP SDK throws on status===error even when HTTP is 200.
+  if (body && typeof body === 'object' && body.status === 'error') {
+    const apiMsg = body.message || body?.data?.message || 'Unknown Nitrado error';
+    throw new NitradoError(
+      `${apiMsg} (${res.status} ${method} ${path})`,
+      res.status || 400
+    );
+  }
+
   if (!res.ok) {
     const apiMsg = body?.message || body?.data?.message;
     const msg = apiMsg
       ? `${apiMsg} (${res.status} ${method} ${path})`
       : `Nitrado API ${res.status} ${method} ${path}`;
     throw new NitradoError(msg, res.status);
+  }
+
+  if (
+    body &&
+    typeof body === 'object' &&
+    body.status != null &&
+    body.status !== 'success'
+  ) {
+    throw new NitradoError(
+      `Unexpected Nitrado status "${body.status}" (${method} ${path})`,
+      res.status || 400
+    );
   }
 
   return body?.data ?? body;
@@ -201,15 +224,41 @@ async function restartGameserver(serviceId, token) {
 }
 
 /**
- * Update one gameserver setting (Nitrado POST /gameservers/settings).
- * category/key vary by game; ASE commonly uses general/server-name.
+ * Update one gameserver setting.
+ * Official: POST /services/{id}/gameservers/settings
+ * Body (form-urlencoded): category, key, value
  */
 async function updateGameserverSetting(serviceId, token, category, key, value) {
-  return apiPost(`/services/${serviceId}/gameservers/settings`, token, {
-    category: String(category),
-    key: String(key),
-    value: value == null ? '' : String(value),
+  const cat = String(category);
+  const k = String(key);
+  const v = value == null ? '' : String(value);
+  const path = `/services/${serviceId}/gameservers/settings`;
+
+  // Never log password values — only path + category/key for Cybrancee debugging.
+  console.log(`[nitrado] POST ${path} category=${cat} key=${k}`);
+
+  const data = await apiPost(path, token, {
+    category: cat,
+    key: k,
+    value: v,
   });
+
+  // Non-secret settings are usually echoed; passwords may be masked/omitted.
+  const isSecret = /pass/i.test(k);
+  const written = data?.settings?.[cat]?.[k];
+  if (
+    !isSecret &&
+    data?.settings &&
+    written !== undefined &&
+    String(written) !== v
+  ) {
+    throw new NitradoError(
+      `Nitrado accepted settings POST but ${cat}/${k} is still "${String(written).slice(0, 40)}"`,
+      400
+    );
+  }
+
+  return data;
 }
 
 function findSettingKey(settings, predicate) {
@@ -225,18 +274,61 @@ function findSettingKey(settings, predicate) {
   return null;
 }
 
+function listSettingKeys(settings) {
+  const out = [];
+  if (!settings || typeof settings !== 'object') return out;
+  for (const [category, block] of Object.entries(settings)) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    for (const key of Object.keys(block)) {
+      out.push(`${category}/${key}`);
+    }
+  }
+  return out;
+}
+
+function resolveSettingOrThrow(settings, predicate, label, preferredFallbacks = []) {
+  const match = findSettingKey(settings, predicate);
+  if (match) return match;
+
+  // Prefer known fallbacks only when that exact key exists (PHP SDK hasSetting).
+  for (const fb of preferredFallbacks) {
+    if (settings?.[fb.category] && fb.key in settings[fb.category]) {
+      return fb;
+    }
+  }
+
+  const available = listSettingKeys(settings)
+    .filter((p) => /name|pass|host|admin/i.test(p))
+    .slice(0, 24);
+  const hint = available.length
+    ? ` Nearby keys: ${available.join(', ')}`
+    : ' No name/password keys found in gameserver.settings — is this service a gameserver?';
+
+  throw new NitradoError(
+    `Cannot resolve Nitrado setting for ${label}.${hint}`,
+    400
+  );
+}
+
 /**
  * Set in-game / panel server display name via Nitrado settings.
- * Resolves category/key from live settings when possible.
+ * Resolves category/key from live settings (required — no silent guessed keys).
  */
 async function setServerName(serviceId, token, name) {
   const gameserver = await getGameserver(serviceId, token);
   const settings = gameserver.settings || {};
-  const match =
-    findSettingKey(
-      settings,
-      (_cat, key) => /^server[-_]?name$/i.test(key) || /^hostname$/i.test(key)
-    ) || { category: 'general', key: 'server-name' };
+  const match = resolveSettingOrThrow(
+    settings,
+    (_cat, key) =>
+      /^server[-_]?name$/i.test(key) ||
+      /^hostname$/i.test(key) ||
+      /^session[-_]?name$/i.test(key),
+    'server name',
+    [
+      { category: 'general', key: 'server-name' },
+      { category: 'general', key: 'hostname' },
+    ]
+  );
 
   return updateGameserverSetting(
     serviceId,
@@ -249,20 +341,27 @@ async function setServerName(serviceId, token, name) {
 
 /**
  * Set join password via Nitrado settings (not admin password).
- * Resolves category/key from live settings when possible.
+ * Resolves category/key from live settings (required — no silent guessed keys).
  */
 async function setServerPassword(serviceId, token, password) {
   const gameserver = await getGameserver(serviceId, token);
   const settings = gameserver.settings || {};
-  const match =
-    findSettingKey(settings, (_cat, key) => {
+  const match = resolveSettingOrThrow(
+    settings,
+    (_cat, key) => {
       if (/admin/i.test(key)) return false;
       return (
         /^server[-_]?password$/i.test(key) ||
         /^password$/i.test(key) ||
         /^ServerPassword$/i.test(key)
       );
-    }) || { category: 'general', key: 'server-password' };
+    },
+    'join password',
+    [
+      { category: 'general', key: 'password' },
+      { category: 'general', key: 'server-password' },
+    ]
+  );
 
   return updateGameserverSetting(
     serviceId,
@@ -275,19 +374,26 @@ async function setServerPassword(serviceId, token, password) {
 
 /**
  * Set admin password via Nitrado settings (not join/server password).
- * Resolves category/key from live settings when possible.
+ * Resolves category/key from live settings (required — no silent guessed keys).
  */
 async function setAdminPassword(serviceId, token, password) {
   const gameserver = await getGameserver(serviceId, token);
   const settings = gameserver.settings || {};
-  const match =
-    findSettingKey(settings, (_cat, key) => {
+  const match = resolveSettingOrThrow(
+    settings,
+    (_cat, key) => {
       return (
         /admin[-_]?password/i.test(key) ||
         /^serveradminpassword$/i.test(key) ||
         /^AdminPassword$/i.test(key)
       );
-    }) || { category: 'general', key: 'admin-password' };
+    },
+    'admin password',
+    [
+      { category: 'general', key: 'admin-password' },
+      { category: 'general', key: 'server-admin-password' },
+    ]
+  );
 
   return updateGameserverSetting(
     serviceId,
