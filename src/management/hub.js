@@ -22,7 +22,9 @@ const {
 const { testToken, listAllServicesForGuild } = require('../services/nitrado');
 const {
   FEATURE_META,
+  MAP_FORUM_FEATURES,
   setupFeature,
+  ensureMapForums,
   isFeatureEnabled,
   isFeatureConfigured,
 } = require('../services/featureSetup');
@@ -837,11 +839,37 @@ async function handleManagement(interaction) {
 
       if (action === 'sync-servers') {
         const synced = syncServersFromNitrado(guildId, discovered);
+        const guildAfter = getGuild(guildId);
+        const shouldEnsureMapLogs =
+          [...MAP_FORUM_FEATURES].some(
+            (key) =>
+              isFeatureEnabled(guildAfter, key) ||
+              isFeatureConfigured(guildAfter, key)
+          ) ||
+          Object.keys(guildAfter.featureSetup?.mapForums || {}).length > 0;
+
+        let mapEnsureNote = '';
+        if (shouldEnsureMapLogs && interaction.guild) {
+          try {
+            const ensured = await ensureMapForums(
+              interaction.guild,
+              getGuild(guildId)
+            );
+            const mapCount = Object.keys(ensured.mapForums || {}).length;
+            mapEnsureNote = ` Ensured map log forums for **${mapCount}** map(s) (Admin / Chat / Join-Leave).`;
+            if (ensured.errors?.length) {
+              mapEnsureNote += ` _(${ensured.errors.slice(0, 2).join('; ')})_`;
+            }
+          } catch (error) {
+            mapEnsureNote = ` Map log forums could not be ensured: ${error.message}`;
+          }
+        }
+
         await interaction.editReply({
           ...setupPanel(getGuild(guildId)),
           content: `Synced **${synced.length}** server(s) from Nitrado.${
             errors.length ? ` ${errors.length} account(s) failed.` : ''
-          }`,
+          }${mapEnsureNote}`,
         });
         return;
       }
