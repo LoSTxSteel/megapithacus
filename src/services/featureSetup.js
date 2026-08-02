@@ -18,22 +18,22 @@ const MAP_LOG_FORUM_SPECS = {
   adminLogging: {
     forumName: 'admin-logs',
     forumTopic:
-      'In-game admin commands — one thread per map, refreshed from Nitrado every 5 minutes.',
-    blurb: 'In-game admin commands for this map — refreshed from Nitrado every 5 minutes.',
-    refreshMinutes: 5,
+      'In-game admin commands — one thread per map, refreshed from Nitrado every 15 minutes.',
+    blurb: 'In-game admin commands for this map — refreshed from Nitrado every 15 minutes.',
+    refreshMinutes: 15,
   },
   chatLogs: {
     forumName: 'chat-logs',
     forumTopic:
-      'In-game chat — one thread per map, refreshed from Nitrado every 5 minutes.',
-    blurb: 'In-game chat for this map — refreshed from Nitrado every 5 minutes.',
-    refreshMinutes: 5,
+      'In-game chat — one thread per map, refreshed from Nitrado every 15 minutes.',
+    blurb: 'In-game chat for this map — refreshed from Nitrado every 15 minutes.',
+    refreshMinutes: 15,
   },
   joinLeaveLogs: {
     forumName: 'join-leave-logs',
     forumTopic:
-      'Player join and leave events — one thread per map (polled every 60 seconds).',
-    blurb: 'Player join and leave events for this map (polled every 60 seconds).',
+      'Player join and leave events — one thread per map (polled every 3 minutes).',
+    blurb: 'Player join and leave events for this map (polled every 3 minutes).',
     refreshMinutes: null,
     appendOnly: true,
   },
@@ -48,11 +48,11 @@ const FEATURE_META = {
   popManager: {
     key: 'popManager',
     label: 'Server Status',
-    short: 'Auto-refreshing server status & population embed every 5 minutes',
+    short: 'Auto-refreshing server status & population embed every 10 minutes',
     channelName: 'server-status',
     channelTopic:
-      'Live ASE server status & population — updated every 5 minutes by Megapithacus.',
-    refreshMinutes: 5,
+      'Live ASE server status & population — updated every 10 minutes by Megapithacus.',
+    refreshMinutes: 10,
   },
   banLogging: {
     key: 'banLogging',
@@ -75,19 +75,19 @@ const FEATURE_META = {
   adminLogging: {
     key: 'adminLogging',
     label: 'Admin Logging',
-    short: 'Admin Logs forum with one thread per map — Nitrado refresh every 5 minutes',
+    short: 'Admin Logs forum with one thread per map — Nitrado refresh every 15 minutes',
     forumName: 'admin-logs',
     forumTopic: MAP_LOG_FORUM_SPECS.adminLogging.forumTopic,
-    refreshMinutes: 5,
+    refreshMinutes: 15,
     perMap: true,
   },
   chatLogs: {
     key: 'chatLogs',
     label: 'Chat Logs',
-    short: 'Chat Logs forum with one thread per map — Nitrado refresh every 5 minutes',
+    short: 'Chat Logs forum with one thread per map — Nitrado refresh every 15 minutes',
     forumName: 'chat-logs',
     forumTopic: MAP_LOG_FORUM_SPECS.chatLogs.forumTopic,
-    refreshMinutes: 5,
+    refreshMinutes: 15,
     perMap: true,
   },
   joinLeaveLogs: {

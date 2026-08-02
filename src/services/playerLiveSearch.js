@@ -12,6 +12,16 @@ const {
   profileKey,
 } = require('./playerDb');
 
+/** Cache full cluster online lists to cut Nitrado player-list spam. */
+const ONLINE_CACHE_TTL_MS = 45 * 1000;
+/** Minimum gap between starting a new full cluster scan per guild. */
+const SCAN_COOLDOWN_MS = 12 * 1000;
+
+/** @type {Map<string, { at: number, players: any[], promise?: Promise<any[]> }>} */
+const onlineCache = new Map();
+/** @type {Map<string, number>} */
+const lastScanStartedAt = new Map();
+
 function isFakeService(serviceId) {
   return !serviceId || String(serviceId).startsWith('fake');
 }
@@ -73,7 +83,7 @@ function profileMatchesLive(profile, live) {
  * Live Nitrado player list across every synced cluster service.
  * Reuses listPlayers + normalizeOnlinePlayer (same path as tracker / kick).
  */
-async function fetchClusterOnlinePlayers(guild) {
+async function fetchClusterOnlinePlayersUncached(guild) {
   const servers = guild?.servers || [];
   const online = [];
 
@@ -120,6 +130,51 @@ async function fetchClusterOnlinePlayers(guild) {
   return online;
 }
 
+/**
+ * Guild-scoped cluster scan with short TTL cache + scan cooldown.
+ * Concurrent callers share one in-flight promise.
+ */
+async function fetchClusterOnlinePlayers(guild, guildId = null) {
+  const cacheKey = String(guildId || guild?.guildId || guild?.id || '_anon');
+  const now = Date.now();
+  const hit = onlineCache.get(cacheKey);
+
+  if (hit?.players && now - hit.at < ONLINE_CACHE_TTL_MS) {
+    return hit.players;
+  }
+  if (hit?.promise) {
+    return hit.promise;
+  }
+
+  // Within cooldown and we still have a (slightly stale) list — reuse it.
+  const lastStarted = lastScanStartedAt.get(cacheKey) || 0;
+  if (hit?.players && now - lastStarted < SCAN_COOLDOWN_MS) {
+    return hit.players;
+  }
+
+  lastScanStartedAt.set(cacheKey, now);
+  const promise = fetchClusterOnlinePlayersUncached(guild)
+    .then((players) => {
+      onlineCache.set(cacheKey, { at: Date.now(), players });
+      return players;
+    })
+    .catch((error) => {
+      const prev = onlineCache.get(cacheKey);
+      if (prev?.promise === promise) {
+        onlineCache.delete(cacheKey);
+      }
+      throw error;
+    });
+
+  onlineCache.set(cacheKey, {
+    at: hit?.at || 0,
+    players: hit?.players,
+    promise,
+  });
+
+  return promise;
+}
+
 function findLiveMatch(onlinePlayers, profile) {
   return onlinePlayers.find((live) => profileMatchesLive(profile, live)) || null;
 }
@@ -152,7 +207,7 @@ function applyLiveStatus(guildId, profile, live) {
  */
 async function searchPlayersLive(guildId, guild, query) {
   const q = String(query || '').trim();
-  const onlinePlayers = await fetchClusterOnlinePlayers(guild);
+  const onlinePlayers = await fetchClusterOnlinePlayers(guild, guildId);
 
   // Upsert live hits for this query (covers brand-new players not yet in DB)
   const liveHits = onlinePlayers.filter((p) => matchesQuery(liveFields(p), q));
@@ -201,7 +256,7 @@ async function refreshProfileLive(guildId, guild, profileOrId) {
       : profileOrId;
   if (!profile) return null;
 
-  const onlinePlayers = await fetchClusterOnlinePlayers(guild);
+  const onlinePlayers = await fetchClusterOnlinePlayers(guild, guildId);
   const live = findLiveMatch(onlinePlayers, profile);
   return applyLiveStatus(guildId, profile, live);
 }
@@ -212,4 +267,6 @@ module.exports = {
   refreshProfileLive,
   findLiveMatch,
   profileMatchesLive,
+  ONLINE_CACHE_TTL_MS,
+  SCAN_COOLDOWN_MS,
 };

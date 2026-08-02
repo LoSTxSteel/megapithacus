@@ -4,10 +4,10 @@ const { queryCluster } = require('./nitrado');
 const { brandEmbed } = require('../utils/embeds');
 const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 
-const INTERVAL_MS = 5 * 60 * 1000;
+const INTERVAL_MS = 10 * 60 * 1000;
 let timer = null;
 
-/** Warn once per guild/reason (avoid 5m spam). */
+/** Warn once per guild/reason (avoid interval spam). */
 const skipWarned = new Set();
 
 function warnSkipOnce(guildId, reason) {
@@ -79,7 +79,7 @@ function buildPopEmbed(guildConfig, cluster) {
       .setTitle('Server Status & Population')
       .setDescription(description),
     guildConfig,
-    { accent: true, context: 'Server Status · every 5m' }
+    { accent: true, context: 'Server Status · every 10m' }
   );
 }
 
@@ -173,7 +173,7 @@ async function refreshAll(client) {
 
 function startPopManager(client) {
   if (timer) clearInterval(timer);
-  // First refresh shortly after boot, then every 5 minutes.
+  // First refresh shortly after boot, then every 10 minutes.
   setTimeout(() => {
     refreshAll(client).catch((err) =>
       console.warn('[popManager] startup refresh:', err.message)
@@ -184,7 +184,7 @@ function startPopManager(client) {
       console.warn('[popManager] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('[scheduler] popManager started (5m)');
+  console.log('[scheduler] popManager started (10m)');
 }
 
 module.exports = {

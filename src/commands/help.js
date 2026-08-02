@@ -53,7 +53,7 @@ module.exports = {
         {
           name: 'Feature setup',
           value:
-            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Gamerscore Detection** uses `#gamerscore-detection`. **Server Status** refreshes every 5m; Admin/Chat every 5m; joins/leaves every 60s.',
+            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Gamerscore Detection** uses `#gamerscore-detection`. **Server Status** refreshes every 10m; Admin/Chat every 15m; joins/leaves every 3m.',
         }
       );
 

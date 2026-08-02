@@ -12,10 +12,10 @@ const {
   buildMapAdminEmbed,
 } = require('./gameLogs');
 
-const INTERVAL_MS = 5 * 60 * 1000;
+const INTERVAL_MS = 15 * 60 * 1000;
 let timer = null;
 
-/** Warn once per guild/feature/service about missing threads (avoid 5m spam). */
+/** Warn once per guild/feature/service about missing threads (avoid interval spam). */
 const missingThreadWarned = new Set();
 const skipConfiguredWarned = new Set();
 
@@ -318,7 +318,7 @@ function startLogBoards(client) {
       console.warn('[logBoards] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('[scheduler] logBoards started (5m)');
+  console.log('[scheduler] logBoards started (15m)');
 }
 
 module.exports = {

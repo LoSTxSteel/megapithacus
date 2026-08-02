@@ -234,7 +234,7 @@ function parseLogText(text, mapName, serviceId) {
 /** Stagger cluster pulls so Nitrado file_server isn't hit in a burst. */
 const SERVICE_STAGGER_MS = 500;
 /** Share one pull between admin + chat boards in the same refresh cycle. */
-const COLLECT_CACHE_TTL_MS = 60_000;
+const COLLECT_CACHE_TTL_MS = 2 * 60 * 1000;
 /** @type {Map<string, { at: number, result?: any, promise?: Promise<any> }>} */
 const collectCache = new Map();
 /** Last successful parse per service — keep boards alive across 429 cooldowns. */
@@ -527,7 +527,7 @@ function buildMapChatEmbed(serverName, serviceId, chatEntries, note, guild = nul
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Chat log · every 5m',
+      context: 'Chat log · every 15m',
     }
   );
 }
@@ -551,7 +551,7 @@ function buildMapAdminEmbed(serverName, serviceId, gameAdminEntries, note, guild
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Admin log · every 5m',
+      context: 'Admin log · every 15m',
     }
   );
 }

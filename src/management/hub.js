@@ -354,7 +354,7 @@ function featureSetupText(guild, key) {
   }
   if (key === 'joinLeaveLogs') {
     extras.push('Creates the **join-leave-logs** forum with **one thread per map**.');
-    extras.push('Posts when players join or leave (60s Nitrado poll).');
+    extras.push('Posts when players join or leave (3m Nitrado poll).');
     extras.push(`Map threads: **${mapThreadCount}**`);
   }
   if (key === 'popManager') {
@@ -364,7 +364,7 @@ function featureSetupText(guild, key) {
   }
   if (key === 'gamerscoreDetection') {
     const settings = settingsFor(guild);
-    extras.push('Checks Xbox gamerscore when a player joins a map (60s poll).');
+    extras.push('Checks Xbox gamerscore when a player joins a map (3m poll).');
     extras.push(
       `Minimum: **${settings.minScore}** · Punishment: **${punishmentSummary(settings)}**`
     );

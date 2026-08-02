@@ -12,8 +12,8 @@ Discord bot for **ARK: Survival Evolved (Microsoft Store)** clusters hosted on *
   - Admin Pay
   - Feature Management (**Server Status**, **Ban / Pay / Admin / Chat logging**)
 - Feature **Setup** creates a `Megapithacus` category + log forum
-- Server Status refreshes every 5 minutes
-- Admin / Chat logging: one forum post per map, refresh every 10 minutes
+- Server Status refreshes every 10 minutes
+- Admin / Chat logging: one forum post per map, refresh every 15 minutes
 - Player backend DB: logs joins (gamertag, IGN, implant, tribe, map, …)
 - `/playersearch` — admin lookup + ban/unban/kick
 - `/pay` — Admin Pay for permitted roles

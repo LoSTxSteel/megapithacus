@@ -908,12 +908,12 @@ async function listFileBookmarks(serviceId, token) {
 
 const LOG_TAIL_BYTES = 160000;
 const MAX_LOG_FILES = 4;
-/** Known-good Logs dir + file paths — skip re-list on 5m board polls. */
-const LOG_PATH_CACHE_TTL_MS = 20 * 60 * 1000;
+/** Known-good Logs dir + file paths — skip re-list across 15m board polls. */
+const LOG_PATH_CACHE_TTL_MS = 30 * 60 * 1000;
 /** Successful directory listings. */
-const LIST_CACHE_TTL_MS = 15 * 60 * 1000;
+const LIST_CACHE_TTL_MS = 25 * 60 * 1000;
 const LIST_EMPTY_CACHE_TTL_MS = 2 * 60 * 1000;
-const GAMESERVER_CACHE_TTL_MS = 10 * 60 * 1000;
+const GAMESERVER_CACHE_TTL_MS = 15 * 60 * 1000;
 /** 429 cooldown: 5m → 10m → 15m cap. */
 const RATE_LIMIT_BASE_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_MS = 15 * 60 * 1000;

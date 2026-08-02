@@ -10,13 +10,13 @@ const { postJoinLeave } = require('./joinLeaveLog');
 const { ensureMapForums, isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const { handleGamerscoreJoin } = require('./gamerscoreDetection');
 
-const INTERVAL_MS = 60 * 1000;
+const INTERVAL_MS = 3 * 60 * 1000;
 let timer = null;
 
 // serviceId -> Set of profile keys last seen online
 const previousOnline = new Map();
 
-/** Warn once per guild/reason (avoid 60s spam). */
+/** Warn once per guild/reason (avoid interval spam). */
 const skipWarned = new Set();
 
 function warnSkipOnce(guildId, reason) {
@@ -217,7 +217,7 @@ function startPlayerTracker(client) {
     );
   }, INTERVAL_MS);
 
-  console.log('[scheduler] playerTracker started (60s)');
+  console.log('[scheduler] playerTracker started (3m)');
 }
 
 module.exports = {
