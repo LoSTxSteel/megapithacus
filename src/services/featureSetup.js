@@ -15,16 +15,16 @@ const MAP_LOG_FORUM_SPECS = {
   adminLogging: {
     forumName: 'admin-logs',
     forumTopic:
-      'In-game admin commands — one thread per map, refreshed from Nitrado every 10 minutes.',
-    blurb: 'In-game admin commands for this map — refreshed from Nitrado every 10 minutes.',
-    refreshMinutes: 10,
+      'In-game admin commands — one thread per map, refreshed from Nitrado every 5 minutes.',
+    blurb: 'In-game admin commands for this map — refreshed from Nitrado every 5 minutes.',
+    refreshMinutes: 5,
   },
   chatLogs: {
     forumName: 'chat-logs',
     forumTopic:
-      'In-game chat — one thread per map, refreshed from Nitrado every 10 minutes.',
-    blurb: 'In-game chat for this map — refreshed from Nitrado every 10 minutes.',
-    refreshMinutes: 10,
+      'In-game chat — one thread per map, refreshed from Nitrado every 5 minutes.',
+    blurb: 'In-game chat for this map — refreshed from Nitrado every 5 minutes.',
+    refreshMinutes: 5,
   },
   joinLeaveLogs: {
     forumName: 'join-leave-logs',
@@ -72,19 +72,19 @@ const FEATURE_META = {
   adminLogging: {
     key: 'adminLogging',
     label: 'Admin Logging',
-    short: 'Admin Logs forum with one thread per map — Nitrado refresh every 10 minutes',
+    short: 'Admin Logs forum with one thread per map — Nitrado refresh every 5 minutes',
     forumName: 'admin-logs',
     forumTopic: MAP_LOG_FORUM_SPECS.adminLogging.forumTopic,
-    refreshMinutes: 10,
+    refreshMinutes: 5,
     perMap: true,
   },
   chatLogs: {
     key: 'chatLogs',
     label: 'Chat Logs',
-    short: 'Chat Logs forum with one thread per map — Nitrado refresh every 10 minutes',
+    short: 'Chat Logs forum with one thread per map — Nitrado refresh every 5 minutes',
     forumName: 'chat-logs',
     forumTopic: MAP_LOG_FORUM_SPECS.chatLogs.forumTopic,
-    refreshMinutes: 10,
+    refreshMinutes: 5,
     perMap: true,
   },
   joinLeaveLogs: {

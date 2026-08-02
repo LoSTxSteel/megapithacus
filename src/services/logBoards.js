@@ -11,7 +11,7 @@ const {
   buildMapAdminEmbed,
 } = require('./gameLogs');
 
-const INTERVAL_MS = 10 * 60 * 1000;
+const INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
 
 function persistThreadMessageId(guildId, featureKey, serviceId, entry, messageId) {
@@ -170,7 +170,7 @@ function startLogBoards(client) {
       console.warn('Log boards interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('Log boards scheduler started (every 10 minutes · 3 forums · per-map threads)');
+  console.log('Log boards scheduler started (every 5 minutes · 3 forums · per-map threads)');
 }
 
 module.exports = {

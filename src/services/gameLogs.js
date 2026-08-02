@@ -383,7 +383,7 @@ function buildMapChatEmbed(serverName, serviceId, chatEntries, note, guild = nul
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Chat log · every 10m',
+      context: 'Chat log · every 5m',
     }
   );
 }
@@ -407,7 +407,7 @@ function buildMapAdminEmbed(serverName, serviceId, gameAdminEntries, note, guild
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Admin log · every 10m',
+      context: 'Admin log · every 5m',
     }
   );
 }
