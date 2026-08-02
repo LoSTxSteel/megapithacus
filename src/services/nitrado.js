@@ -141,6 +141,79 @@ async function restartGameserver(serviceId, token) {
   return gameserverPower(serviceId, token, 'restart');
 }
 
+/**
+ * Update one gameserver setting (Nitrado POST /gameservers/settings).
+ * category/key vary by game; ASE commonly uses general/server-name.
+ */
+async function updateGameserverSetting(serviceId, token, category, key, value) {
+  return apiPost(`/services/${serviceId}/gameservers/settings`, token, {
+    category: String(category),
+    key: String(key),
+    value: value == null ? '' : String(value),
+  });
+}
+
+function findSettingKey(settings, predicate) {
+  if (!settings || typeof settings !== 'object') return null;
+  for (const [category, block] of Object.entries(settings)) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    for (const key of Object.keys(block)) {
+      if (predicate(category, key)) {
+        return { category, key };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Set in-game / panel server display name via Nitrado settings.
+ * Resolves category/key from live settings when possible.
+ */
+async function setServerName(serviceId, token, name) {
+  const gameserver = await getGameserver(serviceId, token);
+  const settings = gameserver.settings || {};
+  const match =
+    findSettingKey(
+      settings,
+      (_cat, key) => /^server[-_]?name$/i.test(key) || /^hostname$/i.test(key)
+    ) || { category: 'general', key: 'server-name' };
+
+  return updateGameserverSetting(
+    serviceId,
+    token,
+    match.category,
+    match.key,
+    String(name).slice(0, 100)
+  );
+}
+
+/**
+ * Set join password via Nitrado settings (not admin password).
+ * Resolves category/key from live settings when possible.
+ */
+async function setServerPassword(serviceId, token, password) {
+  const gameserver = await getGameserver(serviceId, token);
+  const settings = gameserver.settings || {};
+  const match =
+    findSettingKey(settings, (_cat, key) => {
+      if (/admin/i.test(key)) return false;
+      return (
+        /^server[-_]?password$/i.test(key) ||
+        /^password$/i.test(key) ||
+        /^ServerPassword$/i.test(key)
+      );
+    }) || { category: 'general', key: 'server-password' };
+
+  return updateGameserverSetting(
+    serviceId,
+    token,
+    match.category,
+    match.key,
+    password == null ? '' : String(password)
+  );
+}
+
 function extractMapName(gameserver, fallback) {
   const settings = gameserver.settings || {};
   const configBlock = settings.config || {};
@@ -419,6 +492,9 @@ module.exports = {
   startGameserver,
   stopGameserver,
   restartGameserver,
+  updateGameserverSetting,
+  setServerName,
+  setServerPassword,
   queryService,
   queryCluster,
   describeService,

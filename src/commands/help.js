@@ -41,6 +41,7 @@ module.exports = {
             '`/rewardmanager` — boost rewards hub (enable, channel, amount, type)',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
             "`/creditview` — view another user's credit balance",
+            '`/servermanager` — Nitrado hub (start/stop/restart, password, name)',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/player search` — find players (ban/unban/kick on profile)',

@@ -49,6 +49,16 @@ function tryRewardHubInteraction(interaction) {
   }
 }
 
+function tryServerManagerHubInteraction(interaction) {
+  try {
+    const { handleServerManagerInteraction } = require('../management/serverManagerHub');
+    return handleServerManagerInteraction(interaction);
+  } catch (error) {
+    console.warn('Server manager hub unavailable:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
@@ -92,6 +102,10 @@ module.exports = {
       }
 
       if (await tryRewardHubInteraction(interaction)) {
+        return;
+      }
+
+      if (await tryServerManagerHubInteraction(interaction)) {
         return;
       }
 

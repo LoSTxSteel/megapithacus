@@ -6,6 +6,7 @@ const REQUIRED_COMMANDS = [
   'creditview',
   'creditmanager',
   'rewardmanager',
+  'servermanager',
 ];
 
 /**
