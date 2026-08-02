@@ -39,6 +39,8 @@ function emptyProfile(guildId) {
     gamertag: null,
     characterName: null,
     specimenImplant: null,
+    nitradoPlayerId: null,
+    platformId: null,
     tribeName: null,
     tribeId: null,
     map: null,
@@ -52,6 +54,23 @@ function emptyProfile(guildId) {
     mapsSeen: [],
     notes: '',
   };
+}
+
+/** Reject Steam64 / corrupted MAX_SAFE / Nitrado internal alphanumeric IDs. */
+function looksLikeSpecimenImplant(value) {
+  if (value == null) return false;
+  const s = String(value).trim();
+  if (!/^\d{5,14}$/.test(s)) return false;
+  if (s === '9007199254740991') return false;
+  if (/^7656119\d{10}$/.test(s)) return false;
+  return true;
+}
+
+function firstTruthy(...values) {
+  for (const v of values) {
+    if (v != null && String(v).trim() !== '') return v;
+  }
+  return null;
 }
 
 function getGuildPlayers(guildId) {
@@ -121,7 +140,19 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
 
   if (incoming.gamertag) profile.gamertag = incoming.gamertag;
   if (incoming.characterName) profile.characterName = incoming.characterName;
-  if (incoming.specimenImplant) profile.specimenImplant = String(incoming.specimenImplant);
+  if (incoming.specimenImplant && looksLikeSpecimenImplant(incoming.specimenImplant)) {
+    profile.specimenImplant = String(incoming.specimenImplant).trim();
+  }
+  // Drop previously stored Nitrado internal / Steam / corrupted IDs mistaken for implant
+  if (profile.specimenImplant && !looksLikeSpecimenImplant(profile.specimenImplant)) {
+    profile.specimenImplant = null;
+  }
+  if (incoming.nitradoPlayerId) {
+    profile.nitradoPlayerId = String(incoming.nitradoPlayerId).trim();
+  }
+  if (incoming.platformId) {
+    profile.platformId = String(incoming.platformId).trim();
+  }
   if (incoming.tribeName) profile.tribeName = incoming.tribeName;
   if (incoming.tribeId != null) profile.tribeId = String(incoming.tribeId);
   if (incoming.map) profile.map = incoming.map;
@@ -209,6 +240,11 @@ function getPlayerById(guildId, id) {
 
 /**
  * Normalize a Nitrado / gameserver player payload into our profile shape.
+ *
+ * Nitrado Player Management shape (arkxb):
+ *   { name, id, id_type, online, actions }
+ * - `id` is Nitrado's internal kick/ban action id — NOT the specimen implant.
+ * - Specimen / UE4 PlayerDataID is often in `id2` (when present) or explicit fields.
  */
 function normalizeOnlinePlayer(raw, { map, serviceId }) {
   const gamertag =
@@ -224,17 +260,50 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
     raw.characterName ||
     raw.player_name ||
     raw.ign ||
-    raw.name ||
-    gamertag;
-
-  const specimenImplant =
-    raw.specimen_implant ||
-    raw.specimenImplant ||
-    raw.implant_id ||
-    raw.ue4_id ||
-    raw.id ||
-    raw.player_id ||
     null;
+
+  const nitradoPlayerId = firstTruthy(raw.id);
+  const idType = String(raw.id_type || raw.idType || '').toLowerCase();
+
+  // Prefer explicit specimen / UE4 fields. Never treat Nitrado internal `id` as implant.
+  const specimenCandidates = [
+    raw.specimen_implant,
+    raw.specimenImplant,
+    raw.implant_id,
+    raw.implantId,
+    raw.ue4_id,
+    raw.ue4Id,
+    raw.player_data_id,
+    raw.PlayerDataID,
+    raw.id2,
+    raw.player_id,
+    raw.playerId,
+  ];
+  let specimenImplant = null;
+  for (const candidate of specimenCandidates) {
+    if (looksLikeSpecimenImplant(candidate)) {
+      specimenImplant = String(candidate).trim();
+      break;
+    }
+  }
+
+  // Platform / KickPlayer network id (numeric). Keep separate from specimen.
+  let platformId = firstTruthy(
+    raw.platform_id,
+    raw.platformId,
+    raw.net_id,
+    raw.netId,
+    raw.unique_net_id,
+    raw.UniqueNetId
+  );
+  if (
+    !platformId &&
+    nitradoPlayerId &&
+    idType !== 'internal' &&
+    /^\d{15,}$/.test(String(nitradoPlayerId).trim())
+  ) {
+    platformId = String(nitradoPlayerId).trim();
+  }
 
   const tribeName =
     raw.tribe_name || raw.tribeName || raw.tribe || raw.TribeName || null;
@@ -242,8 +311,14 @@ function normalizeOnlinePlayer(raw, { map, serviceId }) {
 
   return {
     gamertag: gamertag ? String(gamertag) : null,
-    characterName: characterName ? String(characterName) : null,
-    specimenImplant: specimenImplant != null ? String(specimenImplant) : null,
+    characterName: characterName
+      ? String(characterName)
+      : gamertag
+        ? String(gamertag)
+        : null,
+    specimenImplant,
+    nitradoPlayerId: nitradoPlayerId != null ? String(nitradoPlayerId).trim() : null,
+    platformId: platformId != null ? String(platformId).trim() : null,
     tribeName: tribeName ? String(tribeName) : null,
     tribeId: tribeId != null ? String(tribeId) : null,
     map: map || null,
@@ -262,4 +337,5 @@ module.exports = {
   getPlayerById,
   normalizeOnlinePlayer,
   profileKey,
+  looksLikeSpecimenImplant,
 };

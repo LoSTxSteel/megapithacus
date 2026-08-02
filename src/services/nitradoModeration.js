@@ -2,6 +2,9 @@ const {
   addBanlist,
   removeBanlist,
   sendCommand,
+  kickOnlinePlayer,
+  findOnlinePlayer,
+  listPlayers,
   tokenForServer,
 } = require('./nitrado');
 
@@ -10,18 +13,88 @@ function isFakeService(serviceId) {
 }
 
 /**
- * Xbox / MS Store ASE identifier for banlist + console commands.
+ * Xbox / MS Store ASE identifier for banlist (gamertag).
  */
 function playerIdentifier(profile) {
   const id = profile?.gamertag || profile?.characterName || null;
   return id ? String(id).trim() : null;
 }
 
+/**
+ * Quote a console argument for ARK ASE via Nitrado.
+ * Names with spaces need a single pair of double quotes (no nested escapes).
+ * Numeric IDs stay unquoted.
+ */
 function quoteArg(value) {
   const s = String(value).trim();
   if (!s) return s;
-  if (/[\s"]/.test(s)) return `"${s.replace(/"/g, '')}"`;
-  return s;
+  if (/^\d+$/.test(s)) return s;
+  const cleaned = s.replace(/"/g, '').trim();
+  if (!cleaned) return cleaned;
+  if (/\s/.test(cleaned)) return `"${cleaned}"`;
+  return cleaned;
+}
+
+/**
+ * Build KickPlayer / BanPlayer console variants for arkxb.
+ * Prefer numeric platform / network id (NOT specimen / UE4 PlayerDataID).
+ * Gamertag with spaces is a last resort (quoted once).
+ */
+function buildPlayerConsoleCommands(verb, profile, onlineEntry = null) {
+  const cmds = [];
+  const seen = new Set();
+  const push = (cmd) => {
+    const c = String(cmd || '').trim();
+    if (!c || seen.has(c)) return;
+    seen.add(c);
+    cmds.push(c);
+  };
+
+  const idType = String(onlineEntry?.id_type || onlineEntry?.idType || '').toLowerCase();
+  const numericIds = [
+    profile?.platformId,
+    // Numeric Nitrado `id` only when it is not the opaque "internal" kick handle
+    idType !== 'internal' && /^\d+$/.test(String(onlineEntry?.id || ''))
+      ? onlineEntry.id
+      : null,
+  ];
+  for (const id of numericIds) {
+    if (id == null) continue;
+    const n = String(id).trim();
+    if (!/^\d+$/.test(n)) continue;
+    push(`${verb} ${n}`);
+  }
+
+  const name =
+    profile?.gamertag ||
+    profile?.characterName ||
+    onlineEntry?.name ||
+    null;
+  if (name) {
+    const quoted = quoteArg(name);
+    // ASE / Nitrado: one pair of quotes when the gamertag has spaces
+    push(`${verb} ${quoted}`);
+    if (quoted.startsWith('"')) {
+      // Some hosts reject quotes — try raw name as a last console attempt
+      push(`${verb} ${String(name).trim().replace(/"/g, '')}`);
+    }
+  }
+
+  return cmds;
+}
+
+async function sendFirstWorkingCommand(serviceId, token, commands) {
+  let lastError = null;
+  for (const command of commands) {
+    try {
+      await sendCommand(serviceId, token, command);
+      return { ok: true, command };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  throw new Error('No console command variants to try.');
 }
 
 function summarizeResults(results, actionLabel) {
@@ -120,8 +193,35 @@ async function forEachServer(guild, handler, { onlyServiceId = null } = {}) {
 }
 
 /**
+ * Resolve Nitrado online player `id` for Player Management kick.
+ */
+async function resolveNitradoPlayerId(serviceId, token, profile) {
+  if (profile?.nitradoPlayerId) return String(profile.nitradoPlayerId).trim();
+
+  const names = [profile?.gamertag, profile?.characterName].filter(Boolean);
+  for (const name of names) {
+    const entry = await findOnlinePlayer(serviceId, token, name);
+    if (entry?.id != null && String(entry.id).trim()) {
+      return String(entry.id).trim();
+    }
+  }
+
+  // Broader scan: partial match when exact name differs slightly
+  const players = await listPlayers(serviceId, token);
+  if (!Array.isArray(players)) return null;
+  const targets = names.map((n) => String(n).trim().toLowerCase());
+  const match = players.find((p) => {
+    const n = String(p?.name || '')
+      .trim()
+      .toLowerCase();
+    return n && targets.includes(n);
+  });
+  return match?.id != null ? String(match.id).trim() : null;
+}
+
+/**
  * Ban on every synced Nitrado service:
- * 1) banlist add (persistent)
+ * 1) banlist add (persistent — gamertag for Xbox)
  * 2) BanPlayer console command (immediate kick + in-game ban)
  */
 async function banPlayerOnCluster(guild, profile) {
@@ -136,19 +236,16 @@ async function banPlayerOnCluster(guild, profile) {
 
   const results = await forEachServer(guild, async (server, token) => {
     await addBanlist(server.serviceId, token, identifier);
+    const online = await findOnlinePlayer(server.serviceId, token, identifier).catch(
+      () => null
+    );
+    const commands = buildPlayerConsoleCommands('BanPlayer', profile, online);
     try {
-      await sendCommand(
-        server.serviceId,
-        token,
-        `BanPlayer ${quoteArg(identifier)}`
-      );
+      await sendFirstWorkingCommand(server.serviceId, token, commands);
     } catch {
-      // Banlist is the durable action; still try a kick if BanPlayer fails
-      await sendCommand(
-        server.serviceId,
-        token,
-        `KickPlayer ${quoteArg(identifier)}`
-      ).catch(() => {});
+      // Banlist is the durable action; still try KickPlayer variants
+      const kickCmds = buildPlayerConsoleCommands('KickPlayer', profile, online);
+      await sendFirstWorkingCommand(server.serviceId, token, kickCmds).catch(() => {});
     }
   });
 
@@ -180,11 +277,8 @@ async function unbanPlayerOnCluster(guild, profile) {
 
   const results = await forEachServer(guild, async (server, token) => {
     await removeBanlist(server.serviceId, token, identifier);
-    await sendCommand(
-      server.serviceId,
-      token,
-      `UnBanPlayer ${quoteArg(identifier)}`
-    ).catch(() => {});
+    const commands = buildPlayerConsoleCommands('UnBanPlayer', profile, null);
+    await sendFirstWorkingCommand(server.serviceId, token, commands).catch(() => {});
   });
 
   const summary = summarizeResults(results, 'unban');
@@ -201,15 +295,56 @@ async function unbanPlayerOnCluster(guild, profile) {
 }
 
 /**
- * Kick via console command. Prefers the player's current/last map service,
+ * Kick a player on one service:
+ * 1) Nitrado Player Management kick (online `id`) — most reliable for arkxb
+ * 2) Console KickPlayer variants (numeric id, then quoted gamertag)
+ *
+ * Requires the gameserver process to be online; Nitrado returns 500
+ * "could not be sent to the application server" when it is offline.
+ */
+async function kickOnService(server, token, profile) {
+  const nitradoId = await resolveNitradoPlayerId(server.serviceId, token, profile);
+  if (nitradoId) {
+    try {
+      await kickOnlinePlayer(server.serviceId, token, nitradoId);
+      return;
+    } catch {
+      // Fall through to console commands
+    }
+  }
+
+  const online =
+    (nitradoId
+      ? { id: nitradoId, name: profile.gamertag || profile.characterName }
+      : null) ||
+    (await findOnlinePlayer(
+      server.serviceId,
+      token,
+      profile.gamertag || profile.characterName
+    ).catch(() => null));
+
+  const commands = buildPlayerConsoleCommands('KickPlayer', profile, online);
+  if (!commands.length) {
+    throw new Error('No kick target (need online Nitrado player id, platform id, or gamertag).');
+  }
+  await sendFirstWorkingCommand(server.serviceId, token, commands);
+}
+
+/**
+ * Kick via Player Management + console. Prefers the player's current/last map,
  * otherwise tries the whole cluster.
  */
 async function kickPlayerOnCluster(guild, profile) {
   const identifier = playerIdentifier(profile);
-  if (!identifier) {
+  const hasKickTarget =
+    identifier ||
+    profile?.nitradoPlayerId ||
+    profile?.platformId ||
+    profile?.specimenImplant;
+  if (!hasKickTarget) {
     return {
       ok: false,
-      error: 'Player has no gamertag/IGN to send to Nitrado.',
+      error: 'Player has no gamertag/IGN/Nitrado id to kick.',
       ...summarizeResults([], 'kick'),
     };
   }
@@ -222,11 +357,7 @@ async function kickPlayerOnCluster(guild, profile) {
   let results = await forEachServer(
     guild,
     async (server, token) => {
-      await sendCommand(
-        server.serviceId,
-        token,
-        `KickPlayer ${quoteArg(identifier)}`
-      );
+      await kickOnService(server, token, profile);
     },
     preferred ? { onlyServiceId: preferred } : {}
   );
@@ -236,11 +367,7 @@ async function kickPlayerOnCluster(guild, profile) {
   // If preferred map failed / empty, fall back to whole cluster
   if (preferred && (summary.allFailed || summary.noRealServers)) {
     results = await forEachServer(guild, async (server, token) => {
-      await sendCommand(
-        server.serviceId,
-        token,
-        `KickPlayer ${quoteArg(identifier)}`
-      );
+      await kickOnService(server, token, profile);
     });
     summary = summarizeResults(results, 'kick');
   }
@@ -248,7 +375,9 @@ async function kickPlayerOnCluster(guild, profile) {
   if (summary.allFailed) {
     return {
       ok: false,
-      error: `Nitrado kick failed on all servers.\n${summary.summary}`,
+      error:
+        `Nitrado kick failed on all servers.\n${summary.summary}` +
+        '\n_Note: the gameserver must be online for kicks to reach the application._',
       identifier,
       ...summary,
     };
@@ -259,6 +388,7 @@ async function kickPlayerOnCluster(guild, profile) {
 
 module.exports = {
   playerIdentifier,
+  quoteArg,
   banPlayerOnCluster,
   unbanPlayerOnCluster,
   kickPlayerOnCluster,

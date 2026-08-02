@@ -86,6 +86,8 @@ async function moderatePlayer(discordGuild, {
       gamertag: profile.gamertag,
       characterName: profile.characterName,
       specimenImplant: profile.specimenImplant,
+      nitradoPlayerId: profile.nitradoPlayerId,
+      platformId: profile.platformId,
       tribeName: profile.tribeName,
       tribeId: profile.tribeId,
       map: profile.map,

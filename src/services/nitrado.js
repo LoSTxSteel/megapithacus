@@ -17,6 +17,18 @@ function resolveToken(tokenOrGuild) {
   return tokenOrGuild.nitradoToken || null;
 }
 
+/**
+ * JSON.parse loses precision above Number.MAX_SAFE_INTEGER.
+ * Quote 15+ digit integer literals so ARK / Xbox IDs stay exact strings.
+ */
+function parseJsonPreserveLargeInts(text) {
+  const safe = String(text).replace(
+    /([\[:{,]\s*)(-?\d{15,})(\s*[,}\]])/g,
+    '$1"$2"$3'
+  );
+  return JSON.parse(safe);
+}
+
 async function apiRequest(method, path, token, formFields = null) {
   if (!token) {
     throw new NitradoError(
@@ -42,7 +54,8 @@ async function apiRequest(method, path, token, formFields = null) {
 
   let body;
   try {
-    body = await res.json();
+    const text = await res.text();
+    body = text ? parseJsonPreserveLargeInts(text) : null;
   } catch {
     body = null;
   }
@@ -136,11 +149,56 @@ async function removeBanlist(serviceId, token, identifier) {
 
 /**
  * Send a raw admin command to the live gameserver console.
+ * Body must be form-urlencoded `command=` (official NitrAPI-PHP).
  */
 async function sendCommand(serviceId, token, command) {
   return apiPost(`/services/${serviceId}/gameservers/command`, token, {
     command: String(command),
   });
+}
+
+/**
+ * Kick via Nitrado Player Management (preferred for arkxb / online players).
+ * Official shape: GET .../games/players/{playerId}?type=kick
+ * Uses the `id` from GET .../games/players — not gamertag, not specimen implant.
+ */
+async function kickOnlinePlayer(serviceId, token, playerId) {
+  const id = encodeURIComponent(String(playerId).trim());
+  const qs = new URLSearchParams({ type: 'kick' }).toString();
+  try {
+    return await apiGet(
+      `/services/${serviceId}/gameservers/games/players/${id}?${qs}`,
+      token
+    );
+  } catch (error) {
+    // Some products accept POST /players/kick with player_id instead.
+    if (error instanceof NitradoError && (error.status === 404 || error.status === 405)) {
+      return apiPost(`/services/${serviceId}/gameservers/games/players/kick`, token, {
+        player_id: String(playerId).trim(),
+      });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Find an online Nitrado player entry by gamertag / character name.
+ */
+async function findOnlinePlayer(serviceId, token, name) {
+  const target = String(name || '')
+    .trim()
+    .toLowerCase();
+  if (!target) return null;
+  const players = await listPlayers(serviceId, token);
+  if (!Array.isArray(players)) return null;
+  return (
+    players.find((p) => {
+      const n = String(p?.name || p?.username || p?.gamertag || '')
+        .trim()
+        .toLowerCase();
+      return n && n === target;
+    }) || null
+  );
 }
 
 /**
@@ -722,9 +780,11 @@ module.exports = {
   listServices,
   getGameserver,
   listPlayers,
+  findOnlinePlayer,
   addBanlist,
   removeBanlist,
   sendCommand,
+  kickOnlinePlayer,
   gameserverPower,
   startGameserver,
   stopGameserver,
