@@ -32,8 +32,8 @@ const MAP_LOG_FORUM_SPECS = {
   joinLeaveLogs: {
     forumName: 'join-leave-logs',
     forumTopic:
-      'Player join and leave events — one thread per map (polled every 3 minutes).',
-    blurb: 'Player join and leave events for this map (polled every 3 minutes).',
+      'Player join and leave events — one thread per map (polled every 5 minutes).',
+    blurb: 'Player join and leave events for this map (polled every 5 minutes).',
     refreshMinutes: null,
     appendOnly: true,
   },
