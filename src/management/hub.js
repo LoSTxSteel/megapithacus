@@ -35,7 +35,6 @@ const {
   punishmentSummary,
   postSetupReadyEmbed,
 } = require('../services/gamerscoreDetection');
-const { hasApiKey } = require('../services/gamerscore');
 const { baseEmbed, errorEmbed } = require('../utils/embeds');
 const { customisePanel, handleCustomiseInteraction } = require('./customiseBot');
 const { serverPanel, handleServerInteraction } = require('./serverManagement');
@@ -369,7 +368,7 @@ function featureSetupText(guild, key) {
       `Minimum: **${settings.minScore}** · Punishment: **${punishmentSummary(settings)}**`
     );
     extras.push(
-      'Setup includes min score + punishment dropdowns. Also `/gamerscoremanager`. Needs `OPENXBL_API_KEY`.'
+      'Setup includes min score + punishment dropdowns. Also `/gamerscoremanager`.'
     );
   }
 
@@ -516,7 +515,6 @@ function gamerscoreSetupWizard(guild, { content = null } = {}) {
         `Minimum gamerscore: \`${settings.minScore}\``,
         `Punishment: **${punishmentSummary(settings)}**`,
         `Log channel: ${channelId ? `<#${channelId}>` : '_not created yet_'}`,
-        `OpenXBL API key: **${hasApiKey() ? 'configured' : 'missing'}**`,
       ].join('\n')
     );
 

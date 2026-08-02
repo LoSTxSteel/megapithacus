@@ -18,13 +18,39 @@ function settingsFor(guild) {
   };
 }
 
+function formatBanDuration(minutes) {
+  const m = Math.max(0, Math.floor(Number(minutes) || 0));
+  if (m <= 0) return null;
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'}`;
+  if (m % 1440 === 0) {
+    const days = m / 1440;
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+  if (m % 60 === 0) {
+    const hours = m / 60;
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  return `${m} minutes`;
+}
+
 function punishmentSummary(settings) {
   if (settings.punishment === 'ban') {
-    return settings.durationMinutes > 0
-      ? `temp ban (${settings.durationMinutes} minutes)`
-      : 'permanent ban';
+    const duration = formatBanDuration(settings.durationMinutes);
+    return duration ? `temp ban (${duration})` : 'permanent ban';
   }
   return 'kick';
+}
+
+/** Member-facing explanation of when / how long punishment applies. */
+function punishmentTimingText(settings) {
+  if (settings.punishment === 'ban') {
+    const duration = formatBanDuration(settings.durationMinutes);
+    if (!duration) {
+      return 'Players below the minimum will be **permanently banned** when they join a map.';
+    }
+    return `Players below the minimum will be **banned for ${duration}** when they join a map.`;
+  }
+  return 'Players below the minimum will be **kicked immediately** when they join a map.';
 }
 
 /**
@@ -47,6 +73,8 @@ async function postSetupReadyEmbed(discordGuild, guildId) {
         [
           'This feature is **set up and working**.',
           'Xbox gamerscore is checked when players join a map.',
+          '',
+          punishmentTimingText(settings),
         ].join('\n')
       )
       .addFields(
@@ -58,11 +86,6 @@ async function postSetupReadyEmbed(discordGuild, guildId) {
         {
           name: 'Punishment',
           value: punishmentSummary(settings),
-          inline: true,
-        },
-        {
-          name: 'OpenXBL API',
-          value: hasApiKey() ? 'configured' : 'missing (fail-open)',
           inline: true,
         }
       ),
@@ -207,10 +230,10 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       playerName,
       gamerscore: null,
       minScore: settings.minScore,
-      action: 'Allowed (API key missing)',
+      action: 'Allowed (could not verify)',
       mapServer,
       note:
-        'Could not verify — set **OPENXBL_API_KEY** (from https://xbl.io) on the bot host. Fail-open: player was not punished.',
+        'Could not verify gamerscore right now. Fail-open: player was not punished.',
     }).catch((err) =>
       console.warn('Gamerscore log failed:', err.message)
     );
@@ -226,7 +249,8 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       minScore: settings.minScore,
       action: 'Allowed (could not verify)',
       mapServer,
-      note: `Could not verify: ${lookup.error || 'unknown error'}`,
+      note:
+        'Could not verify gamerscore right now. Fail-open: player was not punished.',
     }).catch((err) =>
       console.warn('Gamerscore log failed:', err.message)
     );
@@ -316,6 +340,8 @@ module.exports = {
   handleGamerscoreJoin,
   settingsFor,
   punishmentSummary,
+  punishmentTimingText,
+  formatBanDuration,
   postDetectionLog,
   postSetupReadyEmbed,
 };

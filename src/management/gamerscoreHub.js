@@ -14,7 +14,6 @@ const {
   setupFeature,
 } = require('../services/featureSetup');
 const { canManageGamerscore } = require('../services/guildPermissions');
-const { hasApiKey } = require('../services/gamerscore');
 const {
   settingsFor,
   punishmentSummary,
@@ -61,7 +60,6 @@ function settingsSummary(guildId) {
     `Minimum gamerscore: \`${settings.minScore}\``,
     `Punishment: **${punishmentSummary(settings)}**`,
     `Log passes: **${settings.logPasses ? 'yes' : 'no'}**`,
-    `OpenXBL API key: **${hasApiKey() ? 'configured' : 'missing'}**`,
   ].join('\n');
 }
 
@@ -69,10 +67,7 @@ function setupInstructions() {
   return [
     '**Setup**',
     '1. Enable & set up **Gamerscore Detection** here or in `/management` → Feature Management (creates `#gamerscore-detection`).',
-    '2. Set `OPENXBL_API_KEY` on the bot host (free key: https://xbl.io). Alias: `XBOX_API_KEY`.',
-    '3. Configure minimum score and punishment below.',
-    '',
-    'Without an API key the bot **fail-opens** (logs “could not verify”, does not punish).',
+    '2. Configure minimum score and punishment below.',
   ].join('\n');
 }
 

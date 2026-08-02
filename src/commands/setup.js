@@ -1,8 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { CATEGORY_NAME } = require('../services/featureSetup');
 const { getGuild } = require('../services/storage');
-const { runFullSetup, ADMIN_ROLE_NAME } = require('../services/botSetup');
-const { guildEmbed, errorEmbed, successEmbed } = require('../utils/embeds');
+const { runFullSetup } = require('../services/botSetup');
+const { guildEmbed, errorEmbed } = require('../utils/embeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -56,55 +55,11 @@ module.exports = {
         ],
       });
 
-      const result = await runFullSetup(interaction.guild);
-      const { wipe, rebuild, roleResult, areas } = result;
-      const deletedNames = wipe.deleted
-        .slice(0, 12)
-        .map((d) => `\`${d.name}\``)
-        .join(', ');
-      const createdNames = rebuild.created
-        .map((c) => `\`${c.name}\``)
-        .join(', ');
-      const warnLines = (rebuild.warnings || [])
-        .slice(0, 4)
-        .map((w) => `• ${w}`);
+      await runFullSetup(interaction.guild);
 
       await interaction.editReply({
-        embeds: [
-          successEmbed(
-            'Megapithacus setup complete',
-            [
-              `Scanned **${wipe.scanned}** bot-related channel(s).`,
-              `Deleted **${wipe.deleted.length}** (logging + category).${
-                deletedNames ? ` ${deletedNames}` : ''
-              }${wipe.failed.length ? ` · **${wipe.failed.length}** failed` : ''}`,
-              `Recreated under **${CATEGORY_NAME}**: ${createdNames || '_none_'}`,
-              '',
-              `Admin role: ${roleResult.role} — ${
-                roleResult.created ? 'created' : 'already existed'
-              }`,
-              `Granted: **${areas.join('**, **')}**`,
-              '',
-              `**${ADMIN_ROLE_NAME}** is required (with Manage Server / owner) for **start / stop / restart** via Server Management → Server power.`,
-              'Assign that role to staff who should control servers and the bot.',
-              warnLines.length
-                ? `\n**Notes**\n${warnLines.join('\n')}`
-                : '',
-            ]
-              .filter(Boolean)
-              .join('\n')
-          ),
-          guildEmbed(getGuild(interaction.guildId), 'Next steps', {
-            context: 'Hub',
-          }).setDescription(
-            [
-              '1. `/management` → **Server Setup** — add Nitrado tokens & **Sync servers** (creates Admin / Chat / Join-Leave forums per map)',
-              '2. `/management` → **Server Management** → **Server power** — start / stop / restart',
-              '3. `/permissions` — tweak which roles can use Donations, Rewards, Credits, Server power',
-              '4. `/rewardmanager` — optional boost thank-yous (credit amount & type)',
-            ].join('\n')
-          ),
-        ],
+        content: 'Setup successful.',
+        embeds: [],
       });
     } catch (error) {
       console.error('/setup failed:', error);
