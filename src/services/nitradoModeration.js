@@ -192,31 +192,100 @@ async function forEachServer(guild, handler, { onlyServiceId = null } = {}) {
   return results;
 }
 
+function playerEntryNames(entry) {
+  return [
+    entry?.gamertag,
+    entry?.gamer_tag,
+    entry?.name,
+    entry?.username,
+    entry?.characterName,
+    entry?.character_name,
+    entry?.playerName,
+    entry?.player_name,
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).trim().toLowerCase());
+}
+
+/**
+ * Resolve a live online player for Player Management kick.
+ * Prefer a fresh GET .../games/players match by gamertag over a cached id
+ * (cached ids go stale if the player left during OpenXBL lookup).
+ *
+ * @returns {{ playerId: string|null, entry: object|null, source: string, online: boolean }}
+ */
+async function resolveOnlinePlayerForKick(serviceId, token, profile) {
+  const cachedId = profile?.nitradoPlayerId
+    ? String(profile.nitradoPlayerId).trim()
+    : null;
+  const names = [profile?.gamertag, profile?.characterName]
+    .filter(Boolean)
+    .map((n) => String(n).trim());
+  const targets = names.map((n) => n.toLowerCase());
+
+  let players = null;
+  try {
+    players = await listPlayers(serviceId, token);
+  } catch {
+    players = null;
+  }
+
+  if (Array.isArray(players)) {
+    // Fresh name match against the live list (prefer over cached id)
+    if (targets.length) {
+      const exact = players.find((p) =>
+        playerEntryNames(p).some((n) => targets.includes(n))
+      );
+      if (exact?.id != null && String(exact.id).trim()) {
+        return {
+          playerId: String(exact.id).trim(),
+          entry: exact,
+          source: 'live-name',
+          online: true,
+        };
+      }
+    }
+
+    // 3) Cached id still present in the live list
+    if (cachedId) {
+      const byId = players.find((p) => String(p?.id || '').trim() === cachedId);
+      if (byId) {
+        return {
+          playerId: cachedId,
+          entry: byId,
+          source: 'cached-verified',
+          online: true,
+        };
+      }
+      return {
+        playerId: cachedId,
+        entry: null,
+        source: 'cached-offline',
+        online: false,
+      };
+    }
+
+    return { playerId: null, entry: null, source: 'not-found', online: false };
+  }
+
+  // Player list unavailable — fall back to cached id if any
+  if (cachedId) {
+    return {
+      playerId: cachedId,
+      entry: null,
+      source: 'cached-unverified',
+      online: true,
+    };
+  }
+  return { playerId: null, entry: null, source: 'no-list', online: false };
+}
+
 /**
  * Resolve Nitrado online player `id` for Player Management kick.
  */
 async function resolveNitradoPlayerId(serviceId, token, profile) {
-  if (profile?.nitradoPlayerId) return String(profile.nitradoPlayerId).trim();
-
-  const names = [profile?.gamertag, profile?.characterName].filter(Boolean);
-  for (const name of names) {
-    const entry = await findOnlinePlayer(serviceId, token, name);
-    if (entry?.id != null && String(entry.id).trim()) {
-      return String(entry.id).trim();
-    }
-  }
-
-  // Broader scan: partial match when exact name differs slightly
-  const players = await listPlayers(serviceId, token);
-  if (!Array.isArray(players)) return null;
-  const targets = names.map((n) => String(n).trim().toLowerCase());
-  const match = players.find((p) => {
-    const n = String(p?.name || '')
-      .trim()
-      .toLowerCase();
-    return n && targets.includes(n);
-  });
-  return match?.id != null ? String(match.id).trim() : null;
+  const resolved = await resolveOnlinePlayerForKick(serviceId, token, profile);
+  return resolved.playerId;
 }
 
 /**
@@ -295,20 +364,103 @@ async function unbanPlayerOnCluster(guild, profile) {
 }
 
 /**
+ * Last-resort kick for Xbox ASE: add gamertag to banlist (forces disconnect)
+ * then immediately remove. Not a permanent ban when remove succeeds.
+ */
+async function kickViaBanlistPulse(serviceId, token, gamertag) {
+  const identifier = String(gamertag || '').trim();
+  if (!identifier) {
+    throw new Error('Banlist pulse kick needs a gamertag');
+  }
+  await addBanlist(serviceId, token, identifier);
+  try {
+    await removeBanlist(serviceId, token, identifier);
+  } catch (error) {
+    // Player was kicked, but may remain banned — surface that clearly.
+    throw new Error(
+      `Banlist pulse kicked ${identifier} but unban failed: ${error.message || error}. ` +
+        'Remove them from the Nitrado banlist manually.'
+    );
+  }
+  return { method: 'banlist-pulse', identifier };
+}
+
+/**
  * Kick a player on one service via Player Management (online `id`).
  * Console KickPlayer (`POST .../gameservers/command`) is optional and usually
  * 500s on ASE arkxb — keep it off for gamerscore / automated kicks.
+ * When PM kick fails and a gamertag is available, try banlist add→remove
+ * (forces disconnect on Xbox without leaving a ban when unban works).
  */
 async function kickOnService(server, token, profile, options = {}) {
   const allowConsoleFallback = options.allowConsoleFallback === true;
+  const allowBanlistPulse = options.allowBanlistPulse !== false;
   const reason = options.reason || 'Kicked';
-  const nitradoId = await resolveNitradoPlayerId(server.serviceId, token, profile);
+  const resolved = await resolveOnlinePlayerForKick(
+    server.serviceId,
+    token,
+    profile
+  );
+  const nitradoId = resolved.playerId;
+  const displayName = profile?.gamertag || profile?.characterName || null;
+
+  console.log(
+    `[nitrado] kick resolve service=${server.serviceId} ` +
+      `gt=${profile?.gamertag || '?'} playerId=${nitradoId || '(none)'} ` +
+      `source=${resolved.source} online=${resolved.online}`
+  );
+
+  if (!resolved.online && resolved.source === 'cached-offline') {
+    const msg =
+      `Player ${displayName || nitradoId} is no longer on the online list for ` +
+      `service ${server.serviceId} (cached nitradoPlayerId=${nitradoId}). ` +
+      'They may have already left.';
+    console.warn(`[nitrado] kick: ${msg}`);
+    if (allowBanlistPulse && profile?.gamertag) {
+      try {
+        const pulsed = await kickViaBanlistPulse(
+          server.serviceId,
+          token,
+          profile.gamertag
+        );
+        console.log(
+          `[nitrado] kick via banlist-pulse (cached id offline) ` +
+            `service=${server.serviceId} gt=${profile.gamertag}`
+        );
+        return { ...pulsed, note: msg };
+      } catch (pulseErr) {
+        throw new Error(
+          `${msg} Banlist pulse also failed: ${pulseErr.message || pulseErr}`
+        );
+      }
+    }
+    throw new Error(msg);
+  }
 
   if (!nitradoId) {
     const msg =
       `No Nitrado online player id for gt=${profile?.gamertag || '?'} ` +
       `service=${server.serviceId}`;
     console.warn(`[nitrado] kick: ${msg}`);
+    if (allowBanlistPulse && profile?.gamertag) {
+      try {
+        const pulsed = await kickViaBanlistPulse(
+          server.serviceId,
+          token,
+          profile.gamertag
+        );
+        console.log(
+          `[nitrado] kick via banlist-pulse (no online id) service=${server.serviceId} ` +
+            `gt=${profile.gamertag}`
+        );
+        return pulsed;
+      } catch (pulseErr) {
+        console.warn(
+          `[nitrado] banlist-pulse failed service=${server.serviceId}: ` +
+            `${pulseErr.message || pulseErr}`
+        );
+      }
+    }
     if (!allowConsoleFallback) {
       throw new Error(
         `${msg}. Player Management kick requires the online-list id from join.`
@@ -316,14 +468,53 @@ async function kickOnService(server, token, profile, options = {}) {
     }
   } else {
     try {
-      await kickOnlinePlayer(server.serviceId, token, nitradoId, reason);
-      return { method: 'player-management', playerId: nitradoId };
+      const actions = resolved.entry?.actions;
+      if (Array.isArray(actions) && actions.length && !actions.includes('kick')) {
+        console.warn(
+          `[nitrado] online entry has no kick action service=${server.serviceId} ` +
+            `playerId=${nitradoId} actions=${actions.join(',')}`
+        );
+      }
+      await kickOnlinePlayer(server.serviceId, token, nitradoId, reason, {
+        name: displayName,
+        entry: resolved.entry,
+      });
+      return {
+        method: 'player-management',
+        playerId: nitradoId,
+        source: resolved.source,
+      };
     } catch (error) {
       console.warn(
         `[nitrado] Player Management kick failed service=${server.serviceId} ` +
           `playerId=${nitradoId}: ${error.message || error}`
       );
-      if (!allowConsoleFallback) {
+
+      if (allowBanlistPulse && profile?.gamertag) {
+        try {
+          const pulsed = await kickViaBanlistPulse(
+            server.serviceId,
+            token,
+            profile.gamertag
+          );
+          console.log(
+            `[nitrado] kick via banlist-pulse after PM failure ` +
+              `service=${server.serviceId} gt=${profile.gamertag}`
+          );
+          return { ...pulsed, priorError: error.message || String(error) };
+        } catch (pulseErr) {
+          console.warn(
+            `[nitrado] banlist-pulse failed service=${server.serviceId}: ` +
+              `${pulseErr.message || pulseErr}`
+          );
+          if (!allowConsoleFallback) {
+            throw new Error(
+              `${error.message || error} | Banlist pulse also failed: ` +
+                `${pulseErr.message || pulseErr}`
+            );
+          }
+        }
+      } else if (!allowConsoleFallback) {
         throw error;
       }
       // Fall through to console only when explicitly allowed
@@ -343,8 +534,9 @@ async function kickOnService(server, token, profile, options = {}) {
   );
 
   const online =
+    resolved.entry ||
     (nitradoId
-      ? { id: nitradoId, name: profile.gamertag || profile.characterName }
+      ? { id: nitradoId, name: displayName }
       : null) ||
     (await findOnlinePlayer(
       server.serviceId,
@@ -435,7 +627,7 @@ async function kickPlayerOnCluster(guild, profile, options = {}) {
           ? `Nitrado kick failed: ${firstError}`
           : `Nitrado kick failed on all servers.\n${summary.summary}`) +
         (playerManagementOnly
-          ? '\n_Player Management only — console KickPlayer was not used (ASE /gameservers/command often 500s)._'
+          ? '\n_Player Management / banlist-pulse only — console KickPlayer was not used (ASE /gameservers/command often 500s)._'
           : '\n_Note: the gameserver must be online for kicks to reach the application._'),
       identifier,
       ...summary,

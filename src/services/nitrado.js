@@ -31,7 +31,7 @@ function parseJsonPreserveLargeInts(text) {
 
 const NITRADO_TIMEOUT_MS = 25_000;
 
-async function apiRequest(method, path, token, formFields = null) {
+async function apiRequest(method, path, token, formFields = null, { jsonBody = null } = {}) {
   if (!token) {
     throw new NitradoError(
       'No Nitrado token configured. Add one in /management → Server Setup.',
@@ -46,7 +46,11 @@ async function apiRequest(method, path, token, formFields = null) {
 
   const options = { method, headers };
 
-  if (formFields && Object.keys(formFields).length) {
+  if (jsonBody && typeof jsonBody === 'object') {
+    // Some community Nitrado clients (Flutter/Java) POST JSON for player kick.
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(jsonBody);
+  } else if (formFields && Object.keys(formFields).length) {
     // Official NitrAPI-PHP uses Guzzle form_params (x-www-form-urlencoded).
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     options.body = new URLSearchParams(formFields).toString();
@@ -120,6 +124,10 @@ async function apiPost(path, token, formFields) {
   return apiRequest('POST', path, token, formFields);
 }
 
+async function apiPostJson(path, token, jsonBody) {
+  return apiRequest('POST', path, token, null, { jsonBody });
+}
+
 async function apiDelete(path, token, formFields) {
   // Nitrado DELETE params are commonly accepted as query string
   const qs =
@@ -182,47 +190,98 @@ async function sendCommand(serviceId, token, command) {
  * not specimen implant. ASE / arkxb products disagree on HTTP shape, so we
  * try the known variants in order until one succeeds.
  *
- * Order (observed across Nitrado clients / web UI):
- * 1) POST .../games/players/kick  body player_id=  (Flutter / Java clients)
- * 2) GET  .../games/players/{id}?type=kick
- * 3) DELETE .../games/players/{id}?type=kick
- * 4) DELETE .../games/players/{id}?reason=
- * 5) POST .../games/players/{id}/kick
+ * Official NitrAPI-PHP has list players + banlist only (no kick helper).
+ * Working community shape (Flutter/Java DayZ tools):
+ *   POST .../games/players/kick  with player_id (form or JSON)
+ *
+ * Note: error labels used to end with `player_id=` then `: message`, which
+ * looked like an empty body — the id WAS sent via form-urlencoded.
+ *
+ * @param {string} [reason]
+ * @param {{ name?: string|null, entry?: object|null }} [options]
  */
-async function kickOnlinePlayer(serviceId, token, playerId, reason = 'Kicked') {
+async function kickOnlinePlayer(serviceId, token, playerId, reason = 'Kicked', options = {}) {
   const rawId = String(playerId || '').trim();
   if (!rawId) {
     throw new NitradoError('Missing Nitrado online player id for Player Management kick', 400);
   }
+  const name = options.name ? String(options.name).trim() : '';
   const id = encodeURIComponent(rawId);
   const base = `/services/${serviceId}/gameservers/games/players`;
+  const reasonText = String(reason || 'Kicked').slice(0, 120);
+
+  // Prove the body is non-empty in logs (avoids `player_id=:` false alarm).
+  const formPlayerId = new URLSearchParams({ player_id: rawId }).toString();
+  console.log(
+    `[nitrado] Player Management kick start service=${serviceId} ` +
+      `playerId=${rawId} idLen=${rawId.length} formBody=${formPlayerId}` +
+      (name ? ` name=${name}` : '')
+  );
+
   const attempts = [
     {
-      label: `POST ${base}/kick player_id=`,
+      label: `POST form ${base}/kick body=${formPlayerId}`,
       run: () => apiPost(`${base}/kick`, token, { player_id: rawId }),
     },
     {
-      label: `GET ${base}/{id}?type=kick`,
+      label: `POST json ${base}/kick {"player_id":…}`,
+      run: () => apiPostJson(`${base}/kick`, token, { player_id: rawId }),
+    },
+    {
+      label: `POST form ${base}/kick identifier=`,
+      run: () => apiPost(`${base}/kick`, token, { identifier: rawId }),
+    },
+    {
+      label: `POST form ${base}/kick id=`,
+      run: () => apiPost(`${base}/kick`, token, { id: rawId }),
+    },
+    {
+      label: `POST form ${base}/kick gamer_id=`,
+      run: () => apiPost(`${base}/kick`, token, { gamer_id: rawId }),
+    },
+  ];
+
+  if (name) {
+    attempts.push(
+      {
+        label: `POST form ${base}/kick name=`,
+        run: () => apiPost(`${base}/kick`, token, { name }),
+      },
+      {
+        label: `POST form ${base}/kick gamertag=`,
+        run: () => apiPost(`${base}/kick`, token, { gamertag: name }),
+      },
+      {
+        label: `POST form ${base}/kick player_id= + name=`,
+        run: () =>
+          apiPost(`${base}/kick`, token, { player_id: rawId, name }),
+      }
+    );
+  }
+
+  attempts.push(
+    {
+      label: `GET ${base}/${rawId}?type=kick`,
       run: () =>
         apiGet(`${base}/${id}?${new URLSearchParams({ type: 'kick' })}`, token),
     },
     {
-      label: `DELETE ${base}/{id}?type=kick`,
-      run: () =>
-        apiDelete(`${base}/${id}`, token, { type: 'kick' }),
+      label: `DELETE ${base}/${rawId}?type=kick`,
+      run: () => apiDelete(`${base}/${id}`, token, { type: 'kick' }),
     },
     {
-      label: `DELETE ${base}/{id}?reason=`,
-      run: () =>
-        apiDelete(`${base}/${id}`, token, {
-          reason: String(reason || 'Kicked').slice(0, 120),
-        }),
+      label: `DELETE ${base}/${rawId}?reason=`,
+      run: () => apiDelete(`${base}/${id}`, token, { reason: reasonText }),
     },
     {
-      label: `POST ${base}/{id}/kick`,
+      label: `POST form ${base}/${rawId}/kick`,
       run: () => apiPost(`${base}/${id}/kick`, token, { player_id: rawId }),
     },
-  ];
+    {
+      label: `POST json ${base}/${rawId}/kick`,
+      run: () => apiPostJson(`${base}/${id}/kick`, token, { player_id: rawId }),
+    }
+  );
 
   const errors = [];
   for (const attempt of attempts) {
@@ -235,7 +294,7 @@ async function kickOnlinePlayer(serviceId, token, playerId, reason = 'Kicked') {
       return { data, method: attempt.label, playerId: rawId };
     } catch (error) {
       const msg = error?.message || String(error);
-      errors.push(`${attempt.label}: ${msg}`);
+      errors.push(`${attempt.label} → ${msg}`);
       console.warn(
         `[nitrado] Player Management kick attempt failed service=${serviceId} ` +
           `playerId=${rawId} via ${attempt.label}: ${msg}`
@@ -243,9 +302,17 @@ async function kickOnlinePlayer(serviceId, token, playerId, reason = 'Kicked') {
     }
   }
 
+  const hint =
+    /could not be executed/i.test(errors.join(' '))
+      ? ' Nitrado accepted the request shape but the gameserver refused the kick ' +
+        '(player may already be offline, wrong map/service, or arkxb Player Management ' +
+        'kick is unreliable — console KickPlayer also typically 500s on ASE).'
+      : '';
+
   throw new NitradoError(
     `Player Management kick failed for player ${rawId} on service ${serviceId}. ` +
-      errors.slice(0, 3).join(' | '),
+      errors.slice(0, 4).join(' | ') +
+      hint,
     500
   );
 }
