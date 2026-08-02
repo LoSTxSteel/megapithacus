@@ -12,6 +12,7 @@ const {
 const { errorEmbed, brandEmbed, guildEmbed } = require('../utils/embeds');
 const { EPHEMERAL } = require('../utils/ephemeral');
 const { getGuild } = require('../services/storage');
+const { formatMapName } = require('../utils/mapNames');
 
 function kickLinesFromNotes(notes) {
   if (!notes || notes === 'FAKE_TEST_PROFILE') return [];
@@ -86,9 +87,14 @@ function punishmentSummary(guildId, profile) {
   return `${total} past punishment${total === 1 ? '' : 's'}`;
 }
 
+function displayMap(profile) {
+  return formatMapName(profile?.map, '');
+}
+
 function onlineStatusValue(profile) {
   if (profile.online) {
-    const where = [profile.map, profile.serverName].filter(Boolean).join(' · ');
+    const map = displayMap(profile);
+    const where = [map || null, profile.serverName].filter(Boolean).join(' · ');
     return where ? `🟢 Online · ${where}` : '🟢 Online';
   }
   const last =
@@ -137,7 +143,11 @@ function profileEmbed(profile, guildId) {
         },
         { name: 'Tribe', value: profile.tribeName || '—', inline: true },
         { name: 'Tribe ID', value: profile.tribeId ? `\`${profile.tribeId}\`` : '—', inline: true },
-        { name: 'Map', value: profile.map || '—', inline: true },
+        {
+          name: 'Map',
+          value: formatMapName(profile.map, '—'),
+          inline: true,
+        },
         { name: 'Status', value: onlineStatusValue(profile), inline: true },
         {
           name: 'First seen',
@@ -229,7 +239,7 @@ function resultsPicker(results) {
           return {
             label: `${p.online ? '🟢' : '⚫'} ${title}`.slice(0, 100),
             description: `${gt || '—'} · ${
-              p.online ? p.map || 'Online' : 'Offline'
+              p.online ? formatMapName(p.map, 'Online') : 'Offline'
             }`.slice(0, 100),
             value: p.id,
           };
@@ -240,7 +250,7 @@ function resultsPicker(results) {
 
 function statusBit(profile) {
   if (profile.online) {
-    return ` · 🟢 ${profile.map || 'Online'}`;
+    return ` · 🟢 ${formatMapName(profile.map, 'Online')}`;
   }
   return ' · ⚫ Offline';
 }

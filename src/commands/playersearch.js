@@ -12,7 +12,7 @@ module.exports = {
     .addStringOption((opt) =>
       opt
         .setName('query')
-        .setDescription('Gamertag, IGN, implant, tribe, map, etc.')
+        .setDescription('Gamertag, character name, or Nitrado player id')
         .setRequired(true)
     ),
 

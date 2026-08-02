@@ -3,6 +3,7 @@ const { getGuild } = require('./storage');
 const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 const { formatPingContent } = require('./pingRoles');
 const { brandEmbed } = require('../utils/embeds');
+const { formatMapName } = require('../utils/mapNames');
 
 function buildBanLogEmbed(ban, guildConfig) {
   const target = ban.targetGamertag || ban.gamertag || 'Unknown';
@@ -58,7 +59,7 @@ function buildKickLogEmbed(kick, guildConfig) {
         inline: true,
       },
       { name: 'Kicked by', value: String(kick.moderatorTag || 'Unknown'), inline: true },
-      { name: 'Map', value: kick.map || '—', inline: true },
+      { name: 'Map', value: formatMapName(kick.map, '—'), inline: true },
       { name: 'Reason', value: kick.reason || 'No reason provided' }
     ),
     guildConfig,

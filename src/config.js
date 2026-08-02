@@ -37,8 +37,9 @@ module.exports = {
   developerChannelId: process.env.DEVELOPER_CHANNEL_ID || null,
   brand: {
     name: 'Megapithacus',
-    color: 0xe74c3c,
-    accent: 0xe74c3c,
+    /** Default brand purple (matches admin/chat log accent) */
+    color: 0x9b59b6,
+    accent: 0x9b59b6,
   },
   platform: {
     game: 'ARK: Survival Evolved',

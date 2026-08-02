@@ -185,11 +185,11 @@ async function handleCustomiseInteraction(interaction, { categorySelect }) {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('value')
-              .setLabel('Hex colour (e.g. #e74c3c)')
+              .setLabel('Hex colour (e.g. #9b59b6)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
               .setMaxLength(7)
-              .setPlaceholder('#e74c3c')
+              .setPlaceholder('#9b59b6')
               .setValue(hex)
           )
         );

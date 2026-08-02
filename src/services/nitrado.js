@@ -1,3 +1,5 @@
+const { formatMapName } = require('../utils/mapNames');
+
 const BASE = 'https://api.nitrado.net';
 
 class NitradoError extends Error {
@@ -612,15 +614,17 @@ function extractMapName(gameserver, fallback) {
   const configBlock = settings.config || {};
   const general = settings.general || {};
 
-  return (
+  const raw =
     configBlock.map ||
     configBlock.Map ||
     configBlock.ServerMap ||
     general.map ||
     gameserver.query?.map ||
     gameserver.game_human ||
-    fallback
-  );
+    fallback;
+
+  if (raw == null || String(raw).trim() === '') return fallback;
+  return formatMapName(raw, fallback != null ? String(fallback) : 'Unknown map');
 }
 
 /**

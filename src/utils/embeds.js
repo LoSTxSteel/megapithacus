@@ -65,7 +65,7 @@ function watermarkAuthor() {
 
 /**
  * Apply Megapithacus branding to any embed:
- * author/footer icons, red colour, watermark, timestamp.
+ * author/footer icons, brand colour, watermark, timestamp.
  *
  * Options:
  * - color: override embed accent (number or #hex)

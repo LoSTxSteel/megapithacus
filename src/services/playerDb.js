@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { dataDirFrom } = require('../utils/paths');
+const { formatMapName } = require('../utils/mapNames');
 
 const DATA_DIR = dataDirFrom(__dirname);
 const PLAYERS_FILE = path.join(DATA_DIR, 'players.json');
@@ -175,7 +176,10 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
   }
   if (incoming.tribeName) profile.tribeName = incoming.tribeName;
   if (incoming.tribeId != null) profile.tribeId = String(incoming.tribeId);
-  if (incoming.map) profile.map = incoming.map;
+  if (incoming.map) {
+    const friendly = formatMapName(incoming.map, String(incoming.map).trim());
+    profile.map = friendly;
+  }
   if (incoming.serverName) profile.serverName = String(incoming.serverName);
   if (incoming.serviceId) profile.serviceId = String(incoming.serviceId);
   if (incoming.platform) profile.platform = incoming.platform;
@@ -186,7 +190,7 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
 
   if (incoming.map) {
     const maps = new Set(profile.mapsSeen || []);
-    maps.add(incoming.map);
+    maps.add(formatMapName(incoming.map, String(incoming.map).trim()));
     profile.mapsSeen = [...maps];
   }
 
@@ -240,6 +244,8 @@ function searchPlayers(guildId, query) {
       p.gamertag,
       p.characterName,
       p.specimenImplant,
+      p.nitradoPlayerId,
+      p.platformId,
       p.tribeName,
       p.tribeId,
       p.map,

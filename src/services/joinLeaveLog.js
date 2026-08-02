@@ -7,6 +7,7 @@ const {
 } = require('./featureSetup');
 const { brandEmbed } = require('../utils/embeds');
 const { brand } = require('../config');
+const { formatMapName } = require('../utils/mapNames');
 
 const JOIN_COLOR = 0x2ecc71;
 const LEAVE_COLOR = 0xe74c3c;
@@ -98,7 +99,8 @@ async function postJoinLeave(
   const thread = await discordGuild.channels.fetch(entry.threadId).catch(() => null);
   if (!thread) return { ok: false, reason: 'missing_thread' };
 
-  const footerServer = serverName || mapName || 'Server';
+  const footerServer =
+    serverName || formatMapName(mapName, mapName || 'Server') || 'Server';
   const embed = buildJoinLeaveEmbed(guild, {
     type,
     profile,

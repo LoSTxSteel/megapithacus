@@ -14,6 +14,7 @@ const {
   unbanReasonLabel,
 } = require('./banStore');
 const { brandEmbed } = require('../utils/embeds');
+const { formatMapName } = require('../utils/mapNames');
 
 /** In-memory draft state: key = guildId:userId:profileId:kind */
 const drafts = new Map();
@@ -84,7 +85,7 @@ function banWizardEmbed(profile, draft) {
       .addFields(
         { name: 'Player', value: `\`${target}\``, inline: true },
         { name: 'In-game name', value: profile.characterName || '—', inline: true },
-        { name: 'Map', value: profile.map || '—', inline: true },
+        { name: 'Map', value: formatMapName(profile.map, '—'), inline: true },
         { name: 'Duration', value: banDurationText(draft), inline: true },
         { name: 'Reason', value: reasonText, inline: true }
       ),

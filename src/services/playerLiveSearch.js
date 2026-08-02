@@ -160,8 +160,16 @@ async function searchPlayersLive(guildId, guild, query) {
     upsertPlayer(guildId, { ...live, online: true });
   }
 
-  // DB search (includes just-upserted live hits)
+  // DB search (includes just-upserted live hits; matches nitradoPlayerId / platformId)
   let results = searchPlayers(guildId, q).slice(0, 25);
+
+  // Ensure every live ID/name hit is represented (covers brand-new players)
+  for (const live of liveHits) {
+    const already = results.some((p) => profileMatchesLive(p, live));
+    if (!already) {
+      results.push(upsertPlayer(guildId, { ...live, online: true }));
+    }
+  }
 
   // Refresh online/offline for each result from the cluster scan
   results = results.map((profile) => {
