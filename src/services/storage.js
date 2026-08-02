@@ -30,10 +30,11 @@ function defaultFeatureSetup() {
     popManager: { channelId: null, messageId: null },
     banLogging: { forumId: null },
     donationLogging: { forumId: null },
-    adminLogging: { ready: false },
-    chatLogs: { ready: false },
-    joinLeaveLogs: { ready: false },
-    /** Per-map forums named after the map */
+    /** Three forums; each holds threads keyed by Nitrado serviceId */
+    adminLogging: { forumId: null, ready: false, threads: {} },
+    chatLogs: { forumId: null, ready: false, threads: {} },
+    joinLeaveLogs: { forumId: null, ready: false, threads: {} },
+    /** @deprecated legacy per-map forums — cleared on ensure/setup */
     mapForums: {},
   };
 }
@@ -131,6 +132,7 @@ function mergeFeatureSetup(current = {}, patch = {}) {
     ...Object.keys(patch || {}),
   ]);
 
+  const mapLogKeys = new Set(['adminLogging', 'chatLogs', 'joinLeaveLogs']);
   const merged = { ...defaults, ...current, ...patch };
   for (const key of keys) {
     if (key === 'categoryId') continue;
@@ -158,6 +160,22 @@ function mergeFeatureSetup(current = {}, patch = {}) {
         ...(current[key] || {}),
         ...(patch[key] || {}),
       };
+
+      // Per-map thread maps: replace wholesale when patch provides threads
+      if (mapLogKeys.has(key)) {
+        const patchHasThreads = Object.prototype.hasOwnProperty.call(
+          patch[key] || {},
+          'threads'
+        );
+        if (patchHasThreads) {
+          merged[key].threads = patch[key].threads || {};
+        } else {
+          merged[key].threads = {
+            ...(defaults[key]?.threads || {}),
+            ...(current[key]?.threads || {}),
+          };
+        }
+      }
     }
   }
   return merged;

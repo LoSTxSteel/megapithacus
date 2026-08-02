@@ -14,6 +14,16 @@ const {
 const INTERVAL_MS = 10 * 60 * 1000;
 let timer = null;
 
+function persistThreadMessageId(guildId, featureKey, serviceId, entry, messageId) {
+  const guild = getGuild(guildId);
+  const featureState = { ...(guild.featureSetup[featureKey] || {}) };
+  featureState.threads = {
+    ...(featureState.threads || {}),
+    [serviceId]: { ...entry, messageId },
+  };
+  updateGuild(guildId, { featureSetup: { [featureKey]: featureState } });
+}
+
 async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId, embed) {
   const guild = getGuild(guildId);
   const entry = getMapFeatureThread(guild, serviceId, featureKey);
@@ -30,25 +40,11 @@ async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId
     if (message) {
       await message.edit({ embeds: [embed] });
       if (message.id !== entry.messageId) {
-        const mapForums = { ...(guild.featureSetup.mapForums || {}) };
-        const mapEntry = { ...(mapForums[serviceId] || {}) };
-        mapEntry.threads = {
-          ...(mapEntry.threads || {}),
-          [featureKey]: { ...entry, messageId: message.id },
-        };
-        mapForums[serviceId] = mapEntry;
-        updateGuild(guildId, { featureSetup: { mapForums } });
+        persistThreadMessageId(guildId, featureKey, serviceId, entry, message.id);
       }
     } else {
       const sent = await thread.send({ embeds: [embed] });
-      const mapForums = { ...(getGuild(guildId).featureSetup.mapForums || {}) };
-      const mapEntry = { ...(mapForums[serviceId] || {}) };
-      mapEntry.threads = {
-        ...(mapEntry.threads || {}),
-        [featureKey]: { ...entry, messageId: sent.id },
-      };
-      mapForums[serviceId] = mapEntry;
-      updateGuild(guildId, { featureSetup: { mapForums } });
+      persistThreadMessageId(guildId, featureKey, serviceId, entry, sent.id);
     }
   } catch (error) {
     console.warn(`${featureKey}/${serviceId} refresh failed:`, error.message);
@@ -64,7 +60,7 @@ async function syncMapForums(discordGuild, guildId) {
     }
     return getGuild(guildId);
   } catch (error) {
-    console.warn(`Map forum sync skipped (${guildId}):`, error.message);
+    console.warn(`Map log forum sync skipped (${guildId}):`, error.message);
     return guild;
   }
 }
@@ -174,7 +170,7 @@ function startLogBoards(client) {
       console.warn('Log boards interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('Log boards scheduler started (every 10 minutes · per-map forums)');
+  console.log('Log boards scheduler started (every 10 minutes · 3 forums · per-map threads)');
 }
 
 module.exports = {

@@ -9,29 +9,37 @@ const CATEGORY_NAME = 'Megapithacus';
 const TEXT_LIVE_FEATURES = new Set(['popManager']);
 
 /**
- * Per-map Discord forums named after the map. Each map forum contains
- * feature threads (Chat Logs, Admin Logs, Join / Leave).
+ * Three Discord forums (Admin / Chat / Join-Leave). Each holds one thread per map.
  */
-const MAP_THREAD_SPECS = {
-  chatLogs: {
-    threadName: 'Chat Logs',
-    blurb: 'In-game chat for this map — refreshed from Nitrado every 10 minutes.',
-    refreshMinutes: 10,
-  },
+const MAP_LOG_FORUM_SPECS = {
   adminLogging: {
-    threadName: 'Admin Logs',
+    forumName: 'admin-logs',
+    forumTopic:
+      'In-game admin commands — one thread per map, refreshed from Nitrado every 10 minutes.',
     blurb: 'In-game admin commands for this map — refreshed from Nitrado every 10 minutes.',
     refreshMinutes: 10,
   },
+  chatLogs: {
+    forumName: 'chat-logs',
+    forumTopic:
+      'In-game chat — one thread per map, refreshed from Nitrado every 10 minutes.',
+    blurb: 'In-game chat for this map — refreshed from Nitrado every 10 minutes.',
+    refreshMinutes: 10,
+  },
   joinLeaveLogs: {
-    threadName: 'Join / Leave',
+    forumName: 'join-leave-logs',
+    forumTopic:
+      'Player join and leave events — one thread per map (polled every 60 seconds).',
     blurb: 'Player join and leave events for this map (polled every 60 seconds).',
     refreshMinutes: null,
     appendOnly: true,
   },
 };
 
-const MAP_FORUM_FEATURES = new Set(Object.keys(MAP_THREAD_SPECS));
+const MAP_FORUM_FEATURES = new Set(Object.keys(MAP_LOG_FORUM_SPECS));
+
+/** @deprecated alias — specs are forums now, not per-map threads */
+const MAP_THREAD_SPECS = MAP_LOG_FORUM_SPECS;
 
 const FEATURE_META = {
   popManager: {
@@ -64,24 +72,27 @@ const FEATURE_META = {
   adminLogging: {
     key: 'adminLogging',
     label: 'Admin Logging',
-    short: 'Per-map forum (map name) with Admin Logs thread — Nitrado refresh every 10 minutes',
-    forumName: null,
+    short: 'Admin Logs forum with one thread per map — Nitrado refresh every 10 minutes',
+    forumName: 'admin-logs',
+    forumTopic: MAP_LOG_FORUM_SPECS.adminLogging.forumTopic,
     refreshMinutes: 10,
     perMap: true,
   },
   chatLogs: {
     key: 'chatLogs',
     label: 'Chat Logs',
-    short: 'Per-map forum (map name) with Chat Logs thread — Nitrado refresh every 10 minutes',
-    forumName: null,
+    short: 'Chat Logs forum with one thread per map — Nitrado refresh every 10 minutes',
+    forumName: 'chat-logs',
+    forumTopic: MAP_LOG_FORUM_SPECS.chatLogs.forumTopic,
     refreshMinutes: 10,
     perMap: true,
   },
   joinLeaveLogs: {
     key: 'joinLeaveLogs',
     label: 'Join / Leave Logs',
-    short: 'Per-map forum (map name) with Join / Leave thread — live player traffic',
-    forumName: null,
+    short: 'Join / Leave forum with one thread per map — live player traffic',
+    forumName: 'join-leave-logs',
+    forumTopic: MAP_LOG_FORUM_SPECS.joinLeaveLogs.forumTopic,
     refreshMinutes: null,
     perMap: true,
   },
@@ -295,7 +306,39 @@ async function ensureThreadInForum(forum, threadName, blurb, refreshMinutes, gui
 }
 
 /**
- * One Discord forum per map (forum name = map name), each with Chat / Admin / Join-Leave threads.
+ * Delete legacy per-map forums (old architecture: one forum named after each map).
+ */
+async function wipeLegacyMapForums(discordGuild, guildConfig) {
+  const legacy = guildConfig.featureSetup?.mapForums || {};
+  const deleted = [];
+
+  for (const entry of Object.values(legacy)) {
+    const forumId = entry?.forumId;
+    if (!forumId) continue;
+    const channel = await discordGuild.channels.fetch(forumId).catch(() => null);
+    if (!channel) continue;
+    try {
+      await channel.delete('Megapithacus migrate: per-feature forums replace per-map forums');
+      deleted.push(forumId);
+    } catch {
+      // ignore — full /setup wipe will catch leftovers under Megapithacus
+    }
+  }
+
+  return deleted;
+}
+
+function emptyMapLogFeatureState(existingForumId = null) {
+  return {
+    forumId: existingForumId || null,
+    ready: false,
+    threads: {},
+  };
+}
+
+/**
+ * Three forums (admin-logs, chat-logs, join-leave-logs), each with one thread per map.
+ * Thread keys are Nitrado service IDs (stable). Thread names are map/server display names.
  */
 async function ensureMapForums(discordGuild, guildConfig, options = {}) {
   const category = await ensureCategory(
@@ -309,6 +352,15 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
       categoryId: category.id,
     },
   });
+
+  // Drop old per-map forums so we never keep dual systems
+  if (Object.keys(guildConfig.featureSetup?.mapForums || {}).length) {
+    await wipeLegacyMapForums(discordGuild, guildConfig);
+    updateGuild(discordGuild.id, {
+      featureSetup: { mapForums: {} },
+    });
+    guildConfig = getGuild(discordGuild.id);
+  }
 
   const soft = Boolean(options.softMaps);
   const found = await discoverMapTargets(guildConfig);
@@ -325,12 +377,12 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     }
     if (!(guildConfig.nitradoAccounts || []).length) {
       errors = [
-        'Map forums pending — add a Nitrado token and use Sync servers.',
+        'Map log threads pending — add a Nitrado token and use Sync servers.',
         ...errors,
       ];
     } else if (!errors.length) {
       errors = [
-        'Map forums pending — Sync servers to import maps, then forums are created automatically.',
+        'Map log threads pending — Sync servers to import maps, then threads are created automatically.',
       ];
     }
   }
@@ -340,57 +392,40 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     guildConfig = getGuild(discordGuild.id);
   }
 
-  const existing = {
-    ...(getGuild(discordGuild.id).featureSetup?.mapForums || {}),
-  };
+  const featureStates = {};
 
-  for (const target of targets) {
-    const prev = existing[target.key] || {};
-    let forum = prev.forumId
-      ? await discordGuild.channels.fetch(prev.forumId).catch(() => null)
-      : null;
+  for (const [featureKey, spec] of Object.entries(MAP_LOG_FORUM_SPECS)) {
+    const prev = getGuild(discordGuild.id).featureSetup?.[featureKey] || {};
+    const forum = await ensureForum(
+      discordGuild,
+      category,
+      spec.forumName,
+      spec.forumTopic,
+      prev.forumId || null
+    );
 
-    if (!forum || forum.type !== ChannelType.GuildForum) {
-      forum = discordGuild.channels.cache.find(
-        (c) =>
-          c.type === ChannelType.GuildForum &&
-          c.parentId === category.id &&
-          c.name === target.name
-      );
-    }
-
-    if (!forum) {
-      forum = await discordGuild.channels.create({
-        name: target.name,
-        type: ChannelType.GuildForum,
-        parent: category.id,
-        topic: `${target.name} — Chat, Admin, and Join/Leave logs (Nitrado \`${target.key}\`).`,
-        reason: 'Megapithacus per-map log forum',
-      });
-    } else if (forum.name !== target.name) {
-      await forum.setName(target.name).catch(() => null);
-    }
-
-    const threads = { ...(prev.threads || {}) };
-    for (const [featureKey, spec] of Object.entries(MAP_THREAD_SPECS)) {
+    const threads = {};
+    for (const target of targets) {
+      const prevThread = prev.threads?.[target.key] || {};
       const ensured = await ensureThreadInForum(
         forum,
-        spec.threadName,
+        target.name,
         `${spec.blurb}\nMap: **${target.name}** · Nitrado \`${target.key}\``,
         spec.refreshMinutes,
         guildConfig
       );
-      threads[featureKey] = {
-        ...ensured,
-        threadName: spec.threadName,
+      threads[target.key] = {
+        threadId: ensured.threadId,
+        messageId: ensured.messageId || prevThread.messageId || null,
+        threadName: target.name,
+        serviceId: target.key,
+        accountId: target.accountId || prevThread.accountId || null,
       };
     }
 
-    existing[target.key] = {
+    featureStates[featureKey] = {
       forumId: forum.id,
-      name: target.name,
-      serviceId: target.key,
-      accountId: target.accountId || prev.accountId || null,
+      ready: Object.keys(threads).length > 0,
       threads,
     };
   }
@@ -399,17 +434,14 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     featureSetup: {
       ...(getGuild(discordGuild.id).featureSetup || {}),
       categoryId: category.id,
-      mapForums: existing,
+      mapForums: {},
+      ...featureStates,
     },
   });
 
-  const mapCount = Object.keys(existing).length;
-  if (mapCount > 0) {
-    markMapLogFeaturesReady(discordGuild.id, true);
-  }
-
   return {
-    mapForums: existing,
+    mapForums: featureStates,
+    featureStates,
     targets,
     discovered,
     errors,
@@ -421,7 +453,7 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
 async function ensureMapForumThreads(discordGuild, _forum, _featureKey, guildConfig) {
   const result = await ensureMapForums(discordGuild, guildConfig);
   return {
-    mapThreads: result.mapForums,
+    mapThreads: result.featureStates,
     targets: result.targets,
     discovered: result.discovered,
     errors: result.errors,
@@ -429,16 +461,19 @@ async function ensureMapForumThreads(discordGuild, _forum, _featureKey, guildCon
 }
 
 /**
- * Mark per-map logging features ready when map forums exist.
+ * Mark per-map logging features ready when forums + threads exist.
  */
 function markMapLogFeaturesReady(guildId, ready = true) {
-  return updateGuild(guildId, {
-    featureSetup: {
-      adminLogging: { ready: Boolean(ready) },
-      chatLogs: { ready: Boolean(ready) },
-      joinLeaveLogs: { ready: Boolean(ready) },
-    },
-  });
+  const guild = getGuild(guildId);
+  const patch = {};
+  for (const key of MAP_FORUM_FEATURES) {
+    const current = guild.featureSetup?.[key] || {};
+    patch[key] = {
+      ...current,
+      ready: Boolean(ready) && Boolean(current.forumId),
+    };
+  }
+  return updateGuild(guildId, { featureSetup: patch });
 }
 
 /**
@@ -480,13 +515,18 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       softMaps: options.softMaps,
     });
 
-    const mapCount = Object.keys(result.mapForums || {}).length;
-    featureState = { ready: mapCount > 0 };
+    const states = result.featureStates || {};
+    const mapCount = Object.keys(states[featureKey]?.threads || {}).length;
+    featureState = states[featureKey] || emptyMapLogFeatureState();
     setupExtras = {
       mapCount,
       discoverErrors: result.errors || [],
-      mapForums: result.mapForums,
+      featureStates: states,
+      forum: states[featureKey]?.forumId
+        ? await discordGuild.channels.fetch(states[featureKey].forumId).catch(() => null)
+        : null,
     };
+    forum = setupExtras.forum;
   } else if (TEXT_LIVE_FEATURES.has(featureKey)) {
     channel = await ensureTextChannel(
       discordGuild,
@@ -543,7 +583,8 @@ function isFeatureEnabled(guild, key) {
 
 function isFeatureConfigured(guild, key) {
   if (MAP_FORUM_FEATURES.has(key)) {
-    return Boolean(guild.featureSetup?.[key]?.ready);
+    const setup = guild.featureSetup?.[key];
+    return Boolean(setup?.ready && setup?.forumId);
   }
   const setup = guild.featureSetup?.[key];
   if (!setup) return false;
@@ -555,22 +596,44 @@ function isFeatureConfigured(guild, key) {
   return Boolean(setup.forumId);
 }
 
+/** @deprecated old per-map forum entry — use getMapFeatureThread */
 function getMapForumEntry(guild, serviceId) {
-  return guild.featureSetup?.mapForums?.[String(serviceId)] || null;
+  const sid = String(serviceId);
+  const threads = {};
+  for (const key of MAP_FORUM_FEATURES) {
+    const entry = guild.featureSetup?.[key]?.threads?.[sid];
+    if (entry) threads[key] = entry;
+  }
+  if (!Object.keys(threads).length) return null;
+  return { serviceId: sid, threads };
 }
 
 function getMapFeatureThread(guild, serviceId, featureKey) {
-  return getMapForumEntry(guild, serviceId)?.threads?.[featureKey] || null;
+  return guild.featureSetup?.[featureKey]?.threads?.[String(serviceId)] || null;
+}
+
+function countMapLogThreads(guild, featureKey = null) {
+  if (featureKey) {
+    return Object.keys(guild.featureSetup?.[featureKey]?.threads || {}).length;
+  }
+  let max = 0;
+  for (const key of MAP_FORUM_FEATURES) {
+    max = Math.max(max, Object.keys(guild.featureSetup?.[key]?.threads || {}).length);
+  }
+  return max;
 }
 
 const KNOWN_CHANNEL_NAMES = new Set([
   ...Object.values(FEATURE_META)
     .map((m) => m.forumName || m.channelName)
     .filter(Boolean),
-  // Legacy channel wiped on /setup reset (no longer created)
+  // Legacy channels wiped on /setup reset (no longer created)
   'donation-stats',
   'admin-logging',
-  'chat-logs',
+  'Admin Logs',
+  'Chat Logs',
+  'Join / Leave',
+  'Join Leave',
 ]);
 
 module.exports = {
@@ -579,6 +642,7 @@ module.exports = {
   /** @deprecated alias — pop manager is a text channel now */
   LIVE_BOARD_FEATURES: TEXT_LIVE_FEATURES,
   MAP_FORUM_FEATURES,
+  MAP_LOG_FORUM_SPECS,
   MAP_THREAD_SPECS,
   CATEGORY_NAME,
   KNOWN_CHANNEL_NAMES,
@@ -593,6 +657,7 @@ module.exports = {
   isFeatureConfigured,
   getMapForumEntry,
   getMapFeatureThread,
+  countMapLogThreads,
   emptyBoardEmbed,
   threadNameForMap,
 };

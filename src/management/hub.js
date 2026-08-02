@@ -24,6 +24,7 @@ const {
   FEATURE_META,
   setupFeature,
   ensureMapForums,
+  countMapLogThreads,
   isFeatureEnabled,
   isFeatureConfigured,
 } = require('../services/featureSetup');
@@ -334,21 +335,21 @@ function featureSetupText(guild, key) {
     : '';
 
   const extras = [];
-  const mapForumCount = Object.keys(guild.featureSetup?.mapForums || {}).length;
+  const mapThreadCount = countMapLogThreads(guild, key);
   if (key === 'adminLogging') {
-    extras.push('Creates a **forum named after each map**, with an **Admin Logs** thread inside.');
+    extras.push('Creates the **admin-logs** forum with **one thread per map**.');
     extras.push('Reads **in-game admin commands** from Nitrado ASE logs.');
-    extras.push(`Map forums: **${mapForumCount}**`);
+    extras.push(`Map threads: **${mapThreadCount}**`);
   }
   if (key === 'chatLogs') {
-    extras.push('Creates a **forum named after each map**, with a **Chat Logs** thread inside.');
+    extras.push('Creates the **chat-logs** forum with **one thread per map**.');
     extras.push('Pulls **in-game chat** per map from Nitrado ASE logs.');
-    extras.push(`Map forums: **${mapForumCount}**`);
+    extras.push(`Map threads: **${mapThreadCount}**`);
   }
   if (key === 'joinLeaveLogs') {
-    extras.push('Creates a **forum named after each map**, with a **Join / Leave** thread inside.');
+    extras.push('Creates the **join-leave-logs** forum with **one thread per map**.');
     extras.push('Posts when players join or leave (60s Nitrado poll).');
-    extras.push(`Map forums: **${mapForumCount}**`);
+    extras.push(`Map threads: **${mapThreadCount}**`);
   }
   if (key === 'popManager') {
     extras.push(`Synced maps: **${(guild.servers || []).length}**`);
@@ -357,7 +358,9 @@ function featureSetupText(guild, key) {
   }
 
   const destLine = FEATURE_META[key]?.perMap
-    ? `Map forums: **${Object.keys(guild.featureSetup?.mapForums || {}).length}** (named after each map)`
+    ? `Forum: ${
+        featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'
+      } · Map threads: **${mapThreadCount}**`
     : meta.channelName
       ? `Text channel: ${
           featureState.channelId || featureState.threadId
@@ -368,9 +371,11 @@ function featureSetupText(guild, key) {
 
   const setupHint = meta.channelName
     ? `_Press **Setup** to create the Megapithacus category + #${meta.channelName} text channel._`
-    : meta.forumName
-      ? `_Press **Setup** to create the Megapithacus category + ${meta.forumName} forum._`
-      : '_Press **Setup** to create per-map log forums._';
+    : meta.perMap
+      ? `_Press **Setup** to create ${meta.forumName} + one thread per map._`
+      : meta.forumName
+        ? `_Press **Setup** to create the Megapithacus category + ${meta.forumName} forum._`
+        : '_Press **Setup** to create map log forums._';
 
   return [
     `Configured: **${configured ? 'Yes' : 'No'}**`,
@@ -850,15 +855,15 @@ async function handleManagement(interaction) {
         const synced = syncServersFromNitrado(guildId, discovered);
         let mapEnsureNote = '';
 
-        // Always repair Admin / Chat / Join-Leave map forums after sync
+        // Always repair Admin / Chat / Join-Leave forums + per-map threads after sync
         if (interaction.guild && synced.length) {
           try {
             const ensured = await ensureMapForums(
               interaction.guild,
               getGuild(guildId)
             );
-            const mapCount = Object.keys(ensured.mapForums || {}).length;
-            mapEnsureNote = ` Ensured map log forums for **${mapCount}** map(s) (Admin / Chat / Join-Leave).`;
+            const mapCount = countMapLogThreads(getGuild(guildId));
+            mapEnsureNote = ` Ensured **admin-logs** / **chat-logs** / **join-leave-logs** with **${mapCount}** map thread(s) each.`;
             if (ensured.errors?.length) {
               mapEnsureNote += ` _(${ensured.errors.slice(0, 2).join('; ')})_`;
             }
@@ -999,7 +1004,7 @@ async function handleManagement(interaction) {
       }
       const mapNote =
         typeof result.mapCount === 'number'
-          ? `\nCreated/updated **${result.mapCount}** map forum(s) (named after each map).`
+          ? `\nCreated/updated **${result.mapCount}** map thread(s) in the log forums.`
           : '';
       const errNote =
         result.discoverErrors?.length
@@ -1009,7 +1014,7 @@ async function handleManagement(interaction) {
       const dest = destChannel
         ? `→ ${destChannel}`
         : result.mapCount
-          ? '→ per-map forums'
+          ? '→ admin-logs / chat-logs / join-leave-logs'
           : '';
 
       await interaction.editReply({

@@ -81,11 +81,16 @@ function collectStoredChannelIds(guildConfig) {
     if (state.forumId) ids.add(String(state.forumId));
     if (state.channelId) ids.add(String(state.channelId));
     if (state.threadId) ids.add(String(state.threadId));
+    for (const entry of Object.values(state.threads || {})) {
+      if (entry?.threadId) ids.add(String(entry.threadId));
+    }
+    // Legacy nested mapThreads under a feature
     for (const entry of Object.values(state.mapThreads || {})) {
       if (entry?.threadId) ids.add(String(entry.threadId));
     }
   }
 
+  // Legacy: one forum per map
   for (const mapEntry of Object.values(setup.mapForums || {})) {
     if (mapEntry?.forumId) ids.add(String(mapEntry.forumId));
     for (const thread of Object.values(mapEntry?.threads || {})) {
@@ -168,11 +173,14 @@ async function wipeBotChannels(discordGuild, guildConfig) {
     }
   }
 
-  // Reset feature setup completely (mapForums must clear — merge replaces when present)
+  // Reset feature setup completely (threads/mapForums wholesale-replaced when present)
   updateGuild(discordGuild.id, {
     featureSetup: {
       ...defaultFeatureSetup(),
       mapForums: {},
+      adminLogging: { forumId: null, ready: false, threads: {} },
+      chatLogs: { forumId: null, ready: false, threads: {} },
+      joinLeaveLogs: { forumId: null, ready: false, threads: {} },
     },
     features: {
       popManager: false,
@@ -230,12 +238,16 @@ async function rebuildLoggingChannels(discordGuild) {
     }
   }
 
-  // Create per-map Admin / Chat / Join-Leave forums once (soft if no tokens yet)
+  // Create admin-logs / chat-logs / join-leave-logs forums + per-map threads
   try {
     const result = await ensureMapForums(discordGuild, getGuild(discordGuild.id), {
       softMaps: true,
     });
-    const mapCount = Object.keys(result.mapForums || {}).length;
+    const states = result.featureStates || {};
+    const mapCount = Math.max(
+      0,
+      ...Object.values(states).map((s) => Object.keys(s.threads || {}).length)
+    );
     const ready = mapCount > 0;
     markMapLogFeaturesReady(discordGuild.id, ready);
     updateGuild(discordGuild.id, {
@@ -246,11 +258,21 @@ async function rebuildLoggingChannels(discordGuild) {
         joinLeaveLogs: true,
       },
     });
+    for (const [key, state] of Object.entries(states)) {
+      if (state.forumId) {
+        created.push({
+          type: 'forum',
+          name: FEATURE_META[key]?.forumName || key,
+          id: state.forumId,
+          key,
+        });
+      }
+    }
     created.push({
       type: 'maps',
       name: ready
-        ? `${mapCount} map forum(s) · Admin / Chat / Join-Leave`
-        : 'map forums (pending Nitrado sync)',
+        ? `${mapCount} map thread(s) in Admin / Chat / Join-Leave forums`
+        : 'map log threads (pending Nitrado sync)',
       id: category.id,
       key: 'mapLogs',
     });
@@ -259,7 +281,7 @@ async function rebuildLoggingChannels(discordGuild) {
     }
     if (!ready) {
       warnings.push(
-        'Map log forums will be created when you Sync servers (Server Setup).'
+        'Map log threads will be created when you Sync servers (Server Setup).'
       );
     }
   } catch (error) {
