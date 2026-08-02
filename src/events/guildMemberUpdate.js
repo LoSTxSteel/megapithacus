@@ -38,7 +38,7 @@ module.exports = {
           .setDescription(
             [
               `Thank you <@${newMember.id}> for boosting the server!`,
-              `You've been granted **+${result.amount} seasonal credit**.`,
+              `You've been granted +\`${result.amount}\` seasonal credit.`,
             ].join('\n')
           ),
         guild,

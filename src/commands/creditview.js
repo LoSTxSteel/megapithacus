@@ -39,8 +39,8 @@ module.exports = {
         guildEmbed(guild, 'Credit balance', { context: 'Credits' }).setDescription(
           [
             `User: <@${user.id}>`,
-            `Seasonal: **${credits.seasonal}**`,
-            `Permanent: **${credits.permanent}**`,
+            `Seasonal: \`${credits.seasonal}\``,
+            `Permanent: \`${credits.permanent}\``,
           ].join('\n')
         ),
       ],

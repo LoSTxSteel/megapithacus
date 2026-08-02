@@ -65,7 +65,7 @@ module.exports = {
         embeds: [
           guildEmbed(guild, 'Boost rewards enabled', { context: 'Rewards' }).setDescription(
             [
-              'Server boosts now grant **+3 seasonal credit**.',
+              'Server boosts now grant +`3` seasonal credit.',
               channelLine,
             ].join('\n')
           ),

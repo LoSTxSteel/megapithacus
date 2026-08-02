@@ -21,7 +21,7 @@ function creditTypeOption(opt) {
 }
 
 function formatCredits(credits) {
-  return `Seasonal: **${credits.seasonal}** · Permanent: **${credits.permanent}**`;
+  return `Seasonal: \`${credits.seasonal}\` · Permanent: \`${credits.permanent}\``;
 }
 
 module.exports = {
@@ -133,7 +133,7 @@ module.exports = {
         embeds: [
           guildEmbed(guild, 'Credit added', { context: 'Credits' }).setDescription(
             [
-              `Added **${result.added}** ${type} credit to <@${user.id}>.`,
+              `Added \`${result.added}\` ${type} credit to <@${user.id}>.`,
               formatCredits(result.credits),
             ].join('\n')
           ),
@@ -156,7 +156,7 @@ module.exports = {
         embeds: [
           guildEmbed(guild, 'Credit removed', { context: 'Credits' }).setDescription(
             [
-              `Removed **${result.removed}** ${type} credit from <@${user.id}>.`,
+              `Removed \`${result.removed}\` ${type} credit from <@${user.id}>.`,
               formatCredits(result.credits),
             ].join('\n')
           ),
