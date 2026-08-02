@@ -8,8 +8,30 @@ const CATEGORY_NAME = 'Megapithacus';
 /** Single live post features (cluster-wide) */
 const LIVE_BOARD_FEATURES = new Set(['popManager']);
 
-/** Forum with one post/thread per synced map */
-const MAP_FORUM_FEATURES = new Set(['adminLogging', 'chatLogs']);
+/**
+ * Per-map Discord forums named after the map. Each map forum contains
+ * feature threads (Chat Logs, Admin Logs, Join / Leave).
+ */
+const MAP_THREAD_SPECS = {
+  chatLogs: {
+    threadName: 'Chat Logs',
+    blurb: 'In-game chat for this map — refreshed from Nitrado every 10 minutes.',
+    refreshMinutes: 10,
+  },
+  adminLogging: {
+    threadName: 'Admin Logs',
+    blurb: 'In-game admin commands for this map — refreshed from Nitrado every 10 minutes.',
+    refreshMinutes: 10,
+  },
+  joinLeaveLogs: {
+    threadName: 'Join / Leave',
+    blurb: 'Player join and leave events for this map (polled every 60 seconds).',
+    refreshMinutes: null,
+    appendOnly: true,
+  },
+};
+
+const MAP_FORUM_FEATURES = new Set(Object.keys(MAP_THREAD_SPECS));
 
 const FEATURE_META = {
   popManager: {
@@ -52,20 +74,25 @@ const FEATURE_META = {
   adminLogging: {
     key: 'adminLogging',
     label: 'Admin Logging',
-    short: 'Per-map in-game admin commands from Nitrado — refreshed every 10 minutes',
-    forumName: 'admin-logging',
-    forumTopic:
-      'One forum post per map. In-game admin commands are pulled from Nitrado ASE logs every 10 minutes.',
+    short: 'Per-map forum (map name) with Admin Logs thread — Nitrado refresh every 10 minutes',
+    forumName: null,
     refreshMinutes: 10,
     perMap: true,
   },
   chatLogs: {
     key: 'chatLogs',
     label: 'Chat Logs',
-    short: 'Per-map in-game chat logs in a forum — refreshed every 10 minutes',
-    forumName: 'chat-logs',
-    forumTopic: 'One forum post per synced map for in-game chat — refreshed every 10 minutes.',
+    short: 'Per-map forum (map name) with Chat Logs thread — Nitrado refresh every 10 minutes',
+    forumName: null,
     refreshMinutes: 10,
+    perMap: true,
+  },
+  joinLeaveLogs: {
+    key: 'joinLeaveLogs',
+    label: 'Join / Leave Logs',
+    short: 'Per-map forum (map name) with Join / Leave thread — live player traffic',
+    forumName: null,
+    refreshMinutes: null,
     perMap: true,
   },
 };
@@ -228,77 +255,165 @@ async function discoverMapTargets(guildConfig) {
   };
 }
 
-/**
- * Ensure a forum post exists for each Nitrado service / map.
- * Returns updated mapThreads object.
- */
-async function ensureMapForumThreads(discordGuild, forum, featureKey, guildConfig) {
-  const meta = FEATURE_META[featureKey];
-  const existing = {
-    ...((guildConfig.featureSetup[featureKey] || {}).mapThreads || {}),
-  };
-
-  const { targets, discovered, errors } = await discoverMapTargets(guildConfig);
-
-  if (!targets.length) {
-    const err =
-      errors[0] ||
-      'No Nitrado services found. Add a token in Server Setup and make sure the account has ASE servers.';
-    throw new Error(err);
+async function ensureThreadInForum(forum, threadName, blurb, refreshMinutes, guildConfig) {
+  const existing = forum.threads?.cache?.find((t) => t.name === threadName);
+  if (existing) {
+    const starter = await existing.fetchStarterMessage().catch(() => null);
+    return { threadId: existing.id, messageId: starter?.id || null };
   }
 
-  for (const target of targets) {
-    const prev = existing[target.key];
-    let thread = prev?.threadId
-      ? await discordGuild.channels.fetch(prev.threadId).catch(() => null)
-      : null;
+  // Active threads may not be in cache — search fetched
+  try {
+    const active = await forum.threads.fetchActive();
+    const hit = active.threads.find((t) => t.name === threadName);
+    if (hit) {
+      const starter = await hit.fetchStarterMessage().catch(() => null);
+      return { threadId: hit.id, messageId: starter?.id || null };
+    }
+  } catch {
+    // ignore
+  }
 
-    if (!thread) {
-      const created = await forum.threads.create({
-        name: target.name,
-        message: {
-          embeds: [
-            emptyBoardEmbed(
-              target.name,
-              `${meta.label} for **${target.name}** (Nitrado \`${target.key}\`).`,
-              meta.refreshMinutes
-            ),
-          ],
-        },
-      });
-      const starter = await created.fetchStarterMessage();
-      existing[target.key] = {
-        threadId: created.id,
-        messageId: starter?.id || null,
-        name: target.name,
-        serviceId: target.key,
-        accountId: target.accountId || null,
-      };
-    } else {
-      if (thread.name !== target.name) {
-        await thread.setName(target.name).catch(() => null);
-      }
-      let messageId = prev?.messageId;
-      if (!messageId) {
-        const starter = await thread.fetchStarterMessage().catch(() => null);
-        messageId = starter?.id || null;
-      }
-      existing[target.key] = {
-        threadId: thread.id,
-        messageId,
-        name: target.name,
-        serviceId: target.key,
-        accountId: target.accountId || prev?.accountId || null,
-      };
+  const created = await forum.threads.create({
+    name: threadName,
+    message: {
+      embeds: [
+        emptyBoardEmbed(threadName, blurb, refreshMinutes, guildConfig),
+      ],
+    },
+  });
+  const starter = await created.fetchStarterMessage().catch(() => null);
+  return { threadId: created.id, messageId: starter?.id || null };
+}
+
+/**
+ * One Discord forum per map (forum name = map name), each with Chat / Admin / Join-Leave threads.
+ */
+async function ensureMapForums(discordGuild, guildConfig, options = {}) {
+  const category = await ensureCategory(
+    discordGuild,
+    guildConfig.featureSetup?.categoryId
+  );
+
+  updateGuild(discordGuild.id, {
+    featureSetup: {
+      ...(getGuild(discordGuild.id).featureSetup || {}),
+      categoryId: category.id,
+    },
+  });
+
+  const soft = Boolean(options.softMaps);
+  let targets = [];
+  let discovered = [];
+  let errors = [];
+
+  if (soft && !(guildConfig.nitradoAccounts || []).length) {
+    errors = [
+      'Map forums skipped — add a Nitrado token and sync maps, then run Setup again.',
+    ];
+  } else {
+    const found = await discoverMapTargets(guildConfig);
+    targets = found.targets;
+    discovered = found.discovered;
+    errors = found.errors;
+    if (!targets.length && !soft) {
+      throw new Error(
+        errors[0] ||
+          'No Nitrado services found. Add a token in Server Setup and sync servers.'
+      );
     }
   }
 
-  return { mapThreads: existing, targets, discovered, errors };
+  if (discovered?.length) {
+    syncServersFromNitrado(discordGuild.id, discovered);
+    guildConfig = getGuild(discordGuild.id);
+  }
+
+  const existing = {
+    ...(getGuild(discordGuild.id).featureSetup?.mapForums || {}),
+  };
+
+  for (const target of targets) {
+    const prev = existing[target.key] || {};
+    let forum = prev.forumId
+      ? await discordGuild.channels.fetch(prev.forumId).catch(() => null)
+      : null;
+
+    if (!forum || forum.type !== ChannelType.GuildForum) {
+      forum = discordGuild.channels.cache.find(
+        (c) =>
+          c.type === ChannelType.GuildForum &&
+          c.parentId === category.id &&
+          c.name === target.name
+      );
+    }
+
+    if (!forum) {
+      forum = await discordGuild.channels.create({
+        name: target.name,
+        type: ChannelType.GuildForum,
+        parent: category.id,
+        topic: `${target.name} — Chat, Admin, and Join/Leave logs (Nitrado \`${target.key}\`).`,
+        reason: 'Megapithacus per-map log forum',
+      });
+    } else if (forum.name !== target.name) {
+      await forum.setName(target.name).catch(() => null);
+    }
+
+    const threads = { ...(prev.threads || {}) };
+    for (const [featureKey, spec] of Object.entries(MAP_THREAD_SPECS)) {
+      const ensured = await ensureThreadInForum(
+        forum,
+        spec.threadName,
+        `${spec.blurb}\nMap: **${target.name}** · Nitrado \`${target.key}\``,
+        spec.refreshMinutes,
+        guildConfig
+      );
+      threads[featureKey] = {
+        ...ensured,
+        threadName: spec.threadName,
+      };
+    }
+
+    existing[target.key] = {
+      forumId: forum.id,
+      name: target.name,
+      serviceId: target.key,
+      accountId: target.accountId || prev.accountId || null,
+      threads,
+    };
+  }
+
+  updateGuild(discordGuild.id, {
+    featureSetup: {
+      ...(getGuild(discordGuild.id).featureSetup || {}),
+      categoryId: category.id,
+      mapForums: existing,
+    },
+  });
+
+  return {
+    mapForums: existing,
+    targets,
+    discovered,
+    errors,
+    category,
+  };
+}
+
+/** @deprecated Use ensureMapForums — kept for callers during migration */
+async function ensureMapForumThreads(discordGuild, _forum, _featureKey, guildConfig) {
+  const result = await ensureMapForums(discordGuild, guildConfig);
+  return {
+    mapThreads: result.mapForums,
+    targets: result.targets,
+    discovered: result.discovered,
+    errors: result.errors,
+  };
 }
 
 /**
  * @param {{ softMaps?: boolean }} [options]
- * softMaps: create the forum even when no Nitrado tokens are linked yet
  */
 async function setupFeature(discordGuild, featureKey, options = {}) {
   const meta = FEATURE_META[featureKey];
@@ -316,75 +431,55 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
   const guildConfig = getGuild(discordGuild.id);
   const category = await ensureCategory(discordGuild, guildConfig.featureSetup.categoryId);
 
-  const forum = await ensureForum(
-    discordGuild,
-    category,
-    meta.forumName,
-    meta.forumTopic,
-    guildConfig.featureSetup[featureKey]?.forumId
-  );
-
-  let featureState = {
-    ...(guildConfig.featureSetup[featureKey] || {}),
-    forumId: forum.id,
-  };
-
-  if (LIVE_BOARD_FEATURES.has(featureKey)) {
-    featureState = {
-      ...featureState,
-      ...(await ensureLiveBoard(discordGuild, forum, meta, {
-        ...guildConfig,
-        featureSetup: {
-          ...guildConfig.featureSetup,
-          [featureKey]: featureState,
-        },
-      })),
-    };
-  }
-
+  let forum = null;
+  let featureState = { ...(guildConfig.featureSetup[featureKey] || {}) };
   let setupExtras = {};
 
   if (MAP_FORUM_FEATURES.has(featureKey)) {
-    // softMaps: create forum only (used by /setup so we never hang on Nitrado)
-    if (options.softMaps || !(guildConfig.nitradoAccounts || []).length) {
-      if (!options.softMaps && !(guildConfig.nitradoAccounts || []).length) {
-        throw new Error(
-          'Add a Nitrado token in **/management → Server Setup** first, then run Setup again.'
-        );
-      }
-      featureState = {
-        ...featureState,
-        forumId: forum.id,
-        mapThreads: featureState.mapThreads || {},
-      };
-      setupExtras = {
-        mapCount: Object.keys(featureState.mapThreads || {}).length,
-        discoverErrors: options.softMaps
-          ? [
-              'Map threads skipped during setup — sync maps from Server Setup / Feature setup when ready.',
-            ]
-          : [],
-      };
-    } else {
-      const { mapThreads, targets, discovered, errors } = await ensureMapForumThreads(
-        discordGuild,
-        forum,
-        featureKey,
-        guildConfig
+    if (
+      !options.softMaps &&
+      !(guildConfig.nitradoAccounts || []).length &&
+      !(guildConfig.servers || []).length
+    ) {
+      throw new Error(
+        'Add a Nitrado token in **/management → Server Setup** first, then run Setup again.'
       );
+    }
 
-      if (discovered?.length) {
-        syncServersFromNitrado(discordGuild.id, discovered);
-      }
+    const result = await ensureMapForums(discordGuild, getGuild(discordGuild.id), {
+      softMaps: options.softMaps,
+    });
 
+    featureState = { ready: true };
+    setupExtras = {
+      mapCount: Object.keys(result.mapForums || {}).length,
+      discoverErrors: result.errors || [],
+      mapForums: result.mapForums,
+    };
+  } else {
+    forum = await ensureForum(
+      discordGuild,
+      category,
+      meta.forumName,
+      meta.forumTopic,
+      guildConfig.featureSetup[featureKey]?.forumId
+    );
+
+    featureState = {
+      ...featureState,
+      forumId: forum.id,
+    };
+
+    if (LIVE_BOARD_FEATURES.has(featureKey)) {
       featureState = {
         ...featureState,
-        forumId: forum.id,
-        mapThreads,
-      };
-      setupExtras = {
-        mapCount: targets.length,
-        discoverErrors: errors,
+        ...(await ensureLiveBoard(discordGuild, forum, meta, {
+          ...guildConfig,
+          featureSetup: {
+            ...guildConfig.featureSetup,
+            [featureKey]: featureState,
+          },
+        })),
       };
     }
   }
@@ -410,35 +505,50 @@ function isFeatureEnabled(guild, key) {
 }
 
 function isFeatureConfigured(guild, key) {
+  if (MAP_FORUM_FEATURES.has(key)) {
+    return Boolean(guild.featureSetup?.[key]?.ready);
+  }
   const setup = guild.featureSetup?.[key];
   if (!setup?.forumId) return false;
   if (LIVE_BOARD_FEATURES.has(key)) {
     return Boolean(setup.threadId && setup.messageId);
   }
-  if (MAP_FORUM_FEATURES.has(key)) {
-    // Forum exists; map threads are created on setup/refresh when servers are synced
-    return true;
-  }
   return true;
 }
 
+function getMapForumEntry(guild, serviceId) {
+  return guild.featureSetup?.mapForums?.[String(serviceId)] || null;
+}
+
+function getMapFeatureThread(guild, serviceId, featureKey) {
+  return getMapForumEntry(guild, serviceId)?.threads?.[featureKey] || null;
+}
+
 const KNOWN_CHANNEL_NAMES = new Set([
-  ...Object.values(FEATURE_META).map((m) => m.forumName),
+  ...Object.values(FEATURE_META)
+    .map((m) => m.forumName)
+    .filter(Boolean),
   'donation-stats',
+  'admin-logging',
+  'chat-logs',
 ]);
 
 module.exports = {
   FEATURE_META,
   LIVE_BOARD_FEATURES,
   MAP_FORUM_FEATURES,
+  MAP_THREAD_SPECS,
   CATEGORY_NAME,
   KNOWN_CHANNEL_NAMES,
   ensureCategory,
   setupFeature,
+  ensureMapForums,
   ensureMapForumThreads,
   discoverMapTargets,
   isFeatureEnabled,
   isFeatureConfigured,
+  getMapForumEntry,
+  getMapFeatureThread,
   emptyBoardEmbed,
   threadNameForMap,
 };

@@ -21,7 +21,7 @@ module.exports = {
     startStatusRotation(client);
     startPopManager(client);
     startLogBoards(client);
-    startPlayerTracker();
+    startPlayerTracker(client);
     startBanReminders(client);
     startDeployNotify(client);
   },

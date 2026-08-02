@@ -2,7 +2,8 @@ const { getGuild, listGuildIds, updateGuild, syncServersFromNitrado } = require(
 const {
   isFeatureEnabled,
   isFeatureConfigured,
-  ensureMapForumThreads,
+  ensureMapForums,
+  getMapFeatureThread,
 } = require('./featureSetup');
 const {
   collectPerMapLogs,
@@ -13,12 +14,13 @@ const {
 const INTERVAL_MS = 10 * 60 * 1000;
 let timer = null;
 
-async function editMapThread(discordGuild, featureKey, mapKey, embed, setup) {
-  const entry = setup.mapThreads?.[mapKey];
-  if (!entry?.threadId) return setup;
+async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId, embed) {
+  const guild = getGuild(guildId);
+  const entry = getMapFeatureThread(guild, serviceId, featureKey);
+  if (!entry?.threadId) return;
 
   const thread = await discordGuild.channels.fetch(entry.threadId).catch(() => null);
-  if (!thread) return setup;
+  if (!thread) return;
 
   try {
     const message = entry.messageId
@@ -28,29 +30,43 @@ async function editMapThread(discordGuild, featureKey, mapKey, embed, setup) {
     if (message) {
       await message.edit({ embeds: [embed] });
       if (message.id !== entry.messageId) {
-        setup = {
-          ...setup,
-          mapThreads: {
-            ...setup.mapThreads,
-            [mapKey]: { ...entry, messageId: message.id },
-          },
+        const mapForums = { ...(guild.featureSetup.mapForums || {}) };
+        const mapEntry = { ...(mapForums[serviceId] || {}) };
+        mapEntry.threads = {
+          ...(mapEntry.threads || {}),
+          [featureKey]: { ...entry, messageId: message.id },
         };
+        mapForums[serviceId] = mapEntry;
+        updateGuild(guildId, { featureSetup: { mapForums } });
       }
     } else {
       const sent = await thread.send({ embeds: [embed] });
-      setup = {
-        ...setup,
-        mapThreads: {
-          ...setup.mapThreads,
-          [mapKey]: { ...entry, messageId: sent.id },
-        },
+      const mapForums = { ...(getGuild(guildId).featureSetup.mapForums || {}) };
+      const mapEntry = { ...(mapForums[serviceId] || {}) };
+      mapEntry.threads = {
+        ...(mapEntry.threads || {}),
+        [featureKey]: { ...entry, messageId: sent.id },
       };
+      mapForums[serviceId] = mapEntry;
+      updateGuild(guildId, { featureSetup: { mapForums } });
     }
   } catch (error) {
-    console.warn(`${featureKey}/${mapKey} refresh failed:`, error.message);
+    console.warn(`${featureKey}/${serviceId} refresh failed:`, error.message);
   }
+}
 
-  return setup;
+async function syncMapForums(discordGuild, guildId) {
+  const guild = getGuild(guildId);
+  try {
+    const ensured = await ensureMapForums(discordGuild, guild);
+    if (ensured.discovered?.length) {
+      syncServersFromNitrado(guildId, ensured.discovered);
+    }
+    return getGuild(guildId);
+  } catch (error) {
+    console.warn(`Map forum sync skipped (${guildId}):`, error.message);
+    return guild;
+  }
 }
 
 async function refreshAdminBoard(client, guildId) {
@@ -62,31 +78,7 @@ async function refreshAdminBoard(client, guildId) {
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const forum = await discordGuild.channels
-    .fetch(guild.featureSetup.adminLogging.forumId)
-    .catch(() => null);
-  if (!forum) return;
-
-  let ensured;
-  try {
-    ensured = await ensureMapForumThreads(
-      discordGuild,
-      forum,
-      'adminLogging',
-      guild
-    );
-  } catch (error) {
-    console.warn(`Admin logging thread sync skipped: ${error.message}`);
-    return;
-  }
-  if (ensured.discovered?.length) {
-    syncServersFromNitrado(guildId, ensured.discovered);
-  }
-  let setup = {
-    ...guild.featureSetup.adminLogging,
-    mapThreads: ensured.mapThreads,
-  };
-  const guildFresh = getGuild(guildId);
+  const guildFresh = await syncMapForums(discordGuild, guildId);
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
@@ -100,8 +92,9 @@ async function refreshAdminBoard(client, guildId) {
       admin: [],
       error: 'No data',
     };
-    setup = await editMapThread(
+    await editMapFeatureThread(
       discordGuild,
+      guildId,
       'adminLogging',
       serviceId,
       buildMapAdminEmbed(
@@ -110,12 +103,9 @@ async function refreshAdminBoard(client, guildId) {
         mapData.admin || [],
         mapData.error || 'OK',
         guildFresh
-      ),
-      setup
+      )
     );
   }
-
-  updateGuild(guildId, { featureSetup: { adminLogging: setup } });
 }
 
 async function refreshChatBoard(client, guildId) {
@@ -127,31 +117,7 @@ async function refreshChatBoard(client, guildId) {
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const forum = await discordGuild.channels
-    .fetch(guild.featureSetup.chatLogs.forumId)
-    .catch(() => null);
-  if (!forum) return;
-
-  let ensured;
-  try {
-    ensured = await ensureMapForumThreads(
-      discordGuild,
-      forum,
-      'chatLogs',
-      guild
-    );
-  } catch (error) {
-    console.warn(`Chat logging thread sync skipped: ${error.message}`);
-    return;
-  }
-  if (ensured.discovered?.length) {
-    syncServersFromNitrado(guildId, ensured.discovered);
-  }
-  let setup = {
-    ...guild.featureSetup.chatLogs,
-    mapThreads: ensured.mapThreads,
-  };
-  const guildFresh = getGuild(guildId);
+  const guildFresh = await syncMapForums(discordGuild, guildId);
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
@@ -165,8 +131,9 @@ async function refreshChatBoard(client, guildId) {
       chat: [],
       error: 'No data',
     };
-    setup = await editMapThread(
+    await editMapFeatureThread(
       discordGuild,
+      guildId,
       'chatLogs',
       serviceId,
       buildMapChatEmbed(
@@ -175,12 +142,9 @@ async function refreshChatBoard(client, guildId) {
         mapData.chat || [],
         mapData.error || 'OK',
         guildFresh
-      ),
-      setup
+      )
     );
   }
-
-  updateGuild(guildId, { featureSetup: { chatLogs: setup } });
 }
 
 async function refreshGuildLogBoards(client, guildId) {
@@ -210,7 +174,7 @@ function startLogBoards(client) {
       console.warn('Log boards interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('Log boards scheduler started (every 10 minutes · per-map Nitrado logs)');
+  console.log('Log boards scheduler started (every 10 minutes · per-map forums)');
 }
 
 module.exports = {
@@ -219,5 +183,6 @@ module.exports = {
   refreshGuildLogBoards,
   refreshAdminBoard,
   refreshChatBoard,
+  syncMapForums,
   INTERVAL_MS,
 };

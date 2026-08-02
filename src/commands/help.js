@@ -52,7 +52,7 @@ module.exports = {
         {
           name: 'Feature setup',
           value:
-            'Run `/setup` first for the category + admin role. Each feature **Setup** then creates its log forum under that category. Donation stats post daily totals + a trend chart, and a monthly review every 30 days. Admin/Chat use **one post per map**. Pop refreshes every 5m; Admin/Chat every 10m.',
+            'Run `/setup` first for the category + admin role. Chat, Admin, and Join/Leave logs each use **one Discord forum per map** (forum name = map name) with feature threads inside. Donation stats post daily totals + a trend chart. Pop refreshes every 5m; Admin/Chat every 10m; joins/leaves every 60s.',
         }
       );
 

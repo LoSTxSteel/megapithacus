@@ -36,8 +36,11 @@ function defaultFeatureSetup() {
       lastDailyKey: null,
       lastMonthlyAt: null,
     },
-    adminLogging: { forumId: null, mapThreads: {} },
-    chatLogs: { forumId: null, mapThreads: {} },
+    adminLogging: { ready: false },
+    chatLogs: { ready: false },
+    joinLeaveLogs: { ready: false },
+    /** Per-map forums named after the map */
+    mapForums: {},
   };
 }
 
@@ -75,6 +78,7 @@ function defaultGuild() {
       donationStats: false,
       adminLogging: false,
       chatLogs: false,
+      joinLeaveLogs: false,
     },
     featureSetup: defaultFeatureSetup(),
     botSetupRoleId: null,

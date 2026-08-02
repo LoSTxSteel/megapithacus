@@ -6,6 +6,8 @@ const {
   normalizeOnlinePlayer,
   profileKey,
 } = require('./playerDb');
+const { postJoinLeave } = require('./joinLeaveLog');
+const { ensureMapForums, isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 
 const INTERVAL_MS = 60 * 1000;
 let timer = null;
@@ -13,10 +15,20 @@ let timer = null;
 // serviceId -> Set of profile keys last seen online
 const previousOnline = new Map();
 
-async function scanGuild(guildId) {
+async function scanGuild(client, guildId) {
   const guild = getGuild(guildId);
   if (!(guild.nitradoAccounts || []).length || !(guild.servers || []).length) {
     return;
+  }
+
+  let discordGuild = null;
+  const wantsJoinLeave =
+    isFeatureEnabled(guild, 'joinLeaveLogs') && isFeatureConfigured(guild, 'joinLeaveLogs');
+  if (wantsJoinLeave && client) {
+    discordGuild = await client.guilds.fetch(guildId).catch(() => null);
+    if (discordGuild) {
+      await ensureMapForums(discordGuild, getGuild(guildId)).catch(() => null);
+    }
   }
 
   for (const server of guild.servers) {
@@ -37,6 +49,7 @@ async function scanGuild(guildId) {
 
     const onlineKeys = new Set();
     const prevKey = `${guildId}:${serviceId}`;
+    const isBootstrap = !previousOnline.has(prevKey);
     const prev = previousOnline.get(prevKey) || new Set();
 
     for (const raw of players) {
@@ -51,37 +64,55 @@ async function scanGuild(guildId) {
       const key = profileKey(normalized);
       if (key) onlineKeys.add(key);
 
-      const isJoin = key && !prev.has(key);
-      upsertPlayer(guildId, normalized, { joined: isJoin });
+      const isJoin = !isBootstrap && key && !prev.has(key);
+      const profile = upsertPlayer(guildId, normalized, { joined: isJoin });
+
+      if (isJoin && discordGuild && wantsJoinLeave) {
+        await postJoinLeave(discordGuild, guildId, serviceId, {
+          type: 'join',
+          profile,
+          mapName,
+        }).catch((err) => console.warn('Join log failed:', err.message));
+      }
     }
 
-    markOfflineExcept(guildId, onlineKeys, serviceId);
+    const left = markOfflineExcept(guildId, onlineKeys, serviceId);
+    if (!isBootstrap && discordGuild && wantsJoinLeave) {
+      for (const profile of left) {
+        await postJoinLeave(discordGuild, guildId, serviceId, {
+          type: 'leave',
+          profile,
+          mapName: profile.map || mapName,
+        }).catch((err) => console.warn('Leave log failed:', err.message));
+      }
+    }
+
     previousOnline.set(prevKey, onlineKeys);
   }
 }
 
-async function scanAll() {
+async function scanAll(client) {
   for (const guildId of listGuildIds()) {
     try {
-      await scanGuild(guildId);
+      await scanGuild(client, guildId);
     } catch (error) {
       console.warn(`Player tracker error (${guildId}):`, error.message);
     }
   }
 }
 
-function startPlayerTracker() {
+function startPlayerTracker(client) {
   if (timer) clearInterval(timer);
 
   setTimeout(() => {
-    scanAll().catch((err) => console.warn('Player tracker startup:', err.message));
+    scanAll(client).catch((err) => console.warn('Player tracker startup:', err.message));
   }, 25_000);
 
   timer = setInterval(() => {
-    scanAll().catch((err) => console.warn('Player tracker interval:', err.message));
+    scanAll(client).catch((err) => console.warn('Player tracker interval:', err.message));
   }, INTERVAL_MS);
 
-  console.log('Player tracker started (poll every 60s · join logging + search DB)');
+  console.log('Player tracker started (poll every 60s · joins/leaves + search DB)');
 }
 
 module.exports = {

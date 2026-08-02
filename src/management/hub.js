@@ -352,15 +352,21 @@ function featureSetupText(guild, key) {
     : '';
 
   const extras = [];
+  const mapForumCount = Object.keys(guild.featureSetup?.mapForums || {}).length;
   if (key === 'adminLogging') {
-    extras.push('On **Setup**, finds every service on your Nitrado account and creates a thread each.');
-    extras.push('Reads **in-game admin commands** from Nitrado ASE logs (not Discord).');
-    extras.push(`Nitrado services / posts: **${Object.keys(featureState.mapThreads || {}).length}**`);
+    extras.push('Creates a **forum named after each map**, with an **Admin Logs** thread inside.');
+    extras.push('Reads **in-game admin commands** from Nitrado ASE logs.');
+    extras.push(`Map forums: **${mapForumCount}**`);
   }
   if (key === 'chatLogs') {
-    extras.push('On **Setup**, finds every service on your Nitrado account and creates a thread each.');
+    extras.push('Creates a **forum named after each map**, with a **Chat Logs** thread inside.');
     extras.push('Pulls **in-game chat** per map from Nitrado ASE logs.');
-    extras.push(`Nitrado services / posts: **${Object.keys(featureState.mapThreads || {}).length}**`);
+    extras.push(`Map forums: **${mapForumCount}**`);
+  }
+  if (key === 'joinLeaveLogs') {
+    extras.push('Creates a **forum named after each map**, with a **Join / Leave** thread inside.');
+    extras.push('Posts when players join or leave (60s Nitrado poll).');
+    extras.push(`Map forums: **${mapForumCount}**`);
   }
   if (key === 'popManager') {
     extras.push(`Synced maps: **${(guild.servers || []).length}**`);
@@ -372,7 +378,9 @@ function featureSetupText(guild, key) {
   return [
     `Configured: **${configured ? 'Yes' : 'No'}**`,
     `Category: ${category}`,
-    `Log forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
+    FEATURE_META[key]?.perMap
+      ? `Map forums: **${Object.keys(guild.featureSetup?.mapForums || {}).length}** (named after each map)`
+      : `Log forum: ${featureState.forumId ? `<#${featureState.forumId}>` : '_Not created_'}`,
     ...extras,
     '',
     refresh,
@@ -974,21 +982,26 @@ async function handleManagement(interaction) {
       if (key === 'popManager') {
         await refreshGuildPop(interaction.client, guildId).catch(() => null);
       }
-      if (['adminLogging', 'chatLogs'].includes(key)) {
+      if (['adminLogging', 'chatLogs', 'joinLeaveLogs'].includes(key)) {
         await refreshGuildLogBoards(interaction.client, guildId).catch(() => null);
       }
       const mapNote =
         typeof result.mapCount === 'number'
-          ? `\nCreated/updated **${result.mapCount}** map thread(s) from your Nitrado account.`
+          ? `\nCreated/updated **${result.mapCount}** map forum(s) (named after each map).`
           : '';
       const errNote =
         result.discoverErrors?.length
           ? `\n_Note: ${result.discoverErrors.slice(0, 2).join('; ')}_`
           : '';
+      const dest = result.forum
+        ? `→ ${result.forum}`
+        : result.mapCount
+          ? '→ per-map forums'
+          : '';
 
       await interaction.editReply({
         ...featureDetailPanel(getGuild(guildId), key),
-        content: `Setup complete for **${result.meta.label}** → ${result.forum}${mapNote}${errNote}`,
+        content: `Setup complete for **${result.meta.label}** ${dest}${mapNote}${errNote}`,
       });
     } catch (error) {
       await interaction.editReply({
@@ -1020,7 +1033,11 @@ async function handleManagement(interaction) {
 
     updateGuild(guildId, { features: { [key]: enabled } });
 
-    if (enabled && (key === 'popManager' || ['adminLogging', 'chatLogs'].includes(key))) {
+    if (
+      enabled &&
+      (key === 'popManager' ||
+        ['adminLogging', 'chatLogs', 'joinLeaveLogs'].includes(key))
+    ) {
       await interaction.deferUpdate();
       if (key === 'popManager') {
         await refreshGuildPop(interaction.client, guildId).catch(() => null);

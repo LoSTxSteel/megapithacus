@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const { dataDirFrom } = require('../utils/paths');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = dataDirFrom(__dirname);
 const PLAYERS_FILE = path.join(DATA_DIR, 'players.json');
 
 function ensureStore() {
@@ -150,9 +151,15 @@ function upsertPlayer(guildId, incoming, { joined = false } = {}) {
   return profile;
 }
 
+/**
+ * Mark players offline who are no longer in onlineKeys.
+ * @returns {object[]} profiles that just left
+ */
 function markOfflineExcept(guildId, onlineKeys, serviceId) {
   const profiles = getGuildPlayers(guildId);
+  const left = [];
   let changed = false;
+  const now = new Date().toISOString();
   for (const profile of profiles) {
     if (serviceId && profile.serviceId && String(profile.serviceId) !== String(serviceId)) {
       continue;
@@ -160,10 +167,14 @@ function markOfflineExcept(guildId, onlineKeys, serviceId) {
     const key = profileKey(profile);
     if (profile.online && key && !onlineKeys.has(key)) {
       profile.online = false;
+      profile.lastLeave = now;
+      profile.leaves = (profile.leaves || 0) + 1;
+      left.push({ ...profile });
       changed = true;
     }
   }
   if (changed) saveGuildPlayers(guildId, profiles);
+  return left;
 }
 
 function searchPlayers(guildId, query) {

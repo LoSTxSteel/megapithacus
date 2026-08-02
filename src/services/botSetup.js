@@ -82,6 +82,13 @@ function collectStoredChannelIds(guildConfig) {
     }
   }
 
+  for (const mapEntry of Object.values(setup.mapForums || {})) {
+    if (mapEntry?.forumId) ids.add(String(mapEntry.forumId));
+    for (const thread of Object.values(mapEntry?.threads || {})) {
+      if (thread?.threadId) ids.add(String(thread.threadId));
+    }
+  }
+
   if (setup.donationStats?.channelId) {
     ids.add(String(setup.donationStats.channelId));
   }
@@ -187,12 +194,21 @@ async function rebuildLoggingChannels(discordGuild) {
   for (const key of Object.keys(FEATURE_META)) {
     try {
       const result = await setupFeature(discordGuild, key, { softMaps: true });
-      created.push({
-        type: 'forum',
-        name: result.meta.forumName,
-        id: result.forum.id,
-        key,
-      });
+      if (typeof result.mapCount === 'number') {
+        created.push({
+          type: 'maps',
+          name: `${result.mapCount} map forum(s) · ${result.meta.label}`,
+          id: category.id,
+          key,
+        });
+      } else if (result.forum) {
+        created.push({
+          type: 'forum',
+          name: result.meta.forumName,
+          id: result.forum.id,
+          key,
+        });
+      }
       if (result.discoverErrors?.length) {
         warnings.push(...result.discoverErrors.map((e) => `${result.meta.label}: ${e}`));
       }
