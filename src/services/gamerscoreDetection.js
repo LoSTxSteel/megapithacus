@@ -5,7 +5,13 @@ const {
   isFeatureConfigured,
 } = require('./featureSetup');
 const { getGamerscore, evaluateThreshold, hasApiKey } = require('./gamerscore');
+const { upsertPlayer } = require('./playerDb');
 const { moderatePlayer } = require('./playerModeration');
+const { logKick } = require('./banLog');
+const {
+  kickPlayerOnCluster,
+  banPlayerOnCluster,
+} = require('./nitradoModeration');
 const { brandEmbed } = require('../utils/embeds');
 
 function settingsFor(guild) {
@@ -178,7 +184,32 @@ async function postDetectionLog(discordGuild, guildId, fields) {
 }
 
 /**
+ * Join-time profile shape for Nitrado Player Management kick/ban.
+ * Prefer live poll fields (nitradoPlayerId / serviceId) over a later DB re-read.
+ */
+function kickTargetFromJoin(profile, { gamertag, mapName, serviceId }) {
+  return {
+    id: profile?.id || null,
+    gamertag: gamertag || profile?.gamertag || null,
+    characterName: profile?.characterName || null,
+    specimenImplant: profile?.specimenImplant || null,
+    nitradoPlayerId: profile?.nitradoPlayerId
+      ? String(profile.nitradoPlayerId).trim()
+      : null,
+    platformId: profile?.platformId ? String(profile.platformId).trim() : null,
+    map: mapName || profile?.map || null,
+    serviceId: serviceId
+      ? String(serviceId)
+      : profile?.serviceId
+        ? String(profile.serviceId)
+        : null,
+    online: true,
+  };
+}
+
+/**
  * Run after a player join is detected. Fail-open when score cannot be fetched.
+ * When score is a finite number below min, punish (kick/ban) via Nitrado.
  */
 async function handleGamerscoreJoin(discordGuild, guildId, {
   profile,
@@ -195,21 +226,33 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
   }
 
   const settings = settingsFor(guild);
-  const gamertag =
-    profile?.gamertag ||
-    profile?.characterName ||
-    profile?.name ||
-    null;
+  // OpenXBL must use the Xbox gamertag — never the ARK character / IGN.
+  const gamertag = profile?.gamertag
+    ? String(profile.gamertag).trim()
+    : null;
   const playerName =
-    profile?.gamertag ||
+    gamertag ||
     profile?.characterName ||
     profile?.specimenImplant ||
     'Unknown';
   const mapServer = [mapName || profile?.map, serverName]
     .filter(Boolean)
     .join(' · ') || String(serviceId || '—');
+  const kickTarget = kickTargetFromJoin(profile, {
+    gamertag,
+    mapName,
+    serviceId,
+  });
+
+  console.log(
+    `[gamerscore] check start guild=${guildId} gt=${gamertag || '(none)'} ` +
+      `min=${settings.minScore} punishment=${settings.punishment} ` +
+      `nitradoPlayerId=${kickTarget.nitradoPlayerId || '(none)'} ` +
+      `serviceId=${kickTarget.serviceId || '(none)'}`
+  );
 
   if (!gamertag) {
+    console.warn(`[gamerscore] skip — no Xbox gamertag on Nitrado payload`);
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -219,12 +262,15 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       mapServer,
       note: 'Could not verify — player had no Xbox gamertag on the Nitrado payload.',
     }).catch((err) =>
-      console.warn('Gamerscore log failed:', err.message)
+      console.warn('[gamerscore] log failed:', err.message)
     );
     return { skipped: true, reason: 'no-gamertag' };
   }
 
   if (!hasApiKey()) {
+    console.warn(
+      `[gamerscore] skip — OPENXBL_API_KEY missing (fail-open) gt=${gamertag}`
+    );
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -235,13 +281,19 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       note:
         'Could not verify gamerscore right now. Fail-open: player was not punished.',
     }).catch((err) =>
-      console.warn('Gamerscore log failed:', err.message)
+      console.warn('[gamerscore] log failed:', err.message)
     );
     return { skipped: true, reason: 'no-api-key' };
   }
 
   const lookup = await getGamerscore(gamertag);
-  if (!lookup.ok) {
+  console.log(
+    `[gamerscore] score result gt=${gamertag} ok=${lookup.ok} ` +
+      `score=${lookup.gamerscore ?? 'null'} cached=${Boolean(lookup.cached)} ` +
+      `err=${lookup.error || ''}`
+  );
+
+  if (!lookup.ok || lookup.gamerscore == null || !Number.isFinite(Number(lookup.gamerscore))) {
     await postDetectionLog(discordGuild, guildId, {
       outcome: 'unverified',
       playerName,
@@ -252,26 +304,54 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
       note:
         'Could not verify gamerscore right now. Fail-open: player was not punished.',
     }).catch((err) =>
-      console.warn('Gamerscore log failed:', err.message)
+      console.warn('[gamerscore] log failed:', err.message)
     );
-    return { skipped: true, reason: 'lookup-failed', error: lookup.error };
+    return {
+      skipped: true,
+      reason: 'lookup-failed',
+      error: lookup.error || 'null-score',
+    };
   }
 
-  const verdict = evaluateThreshold(lookup.gamerscore, settings.minScore);
+  const score = Number(lookup.gamerscore);
+  const verdict = evaluateThreshold(score, settings.minScore);
   if (verdict.pass) {
+    console.log(
+      `[gamerscore] pass gt=${gamertag} score=${score} min=${settings.minScore}`
+    );
     if (settings.logPasses) {
       await postDetectionLog(discordGuild, guildId, {
         outcome: 'pass',
         playerName,
-        gamerscore: lookup.gamerscore,
+        gamerscore: score,
         minScore: settings.minScore,
         action: 'Allowed',
         mapServer,
       }).catch((err) =>
-        console.warn('Gamerscore log failed:', err.message)
+        console.warn('[gamerscore] log failed:', err.message)
       );
     }
-    return { ok: true, pass: true, gamerscore: lookup.gamerscore };
+    return { ok: true, pass: true, gamerscore: score };
+  }
+
+  console.log(
+    `[gamerscore] below min gt=${gamertag} score=${score} min=${settings.minScore} ` +
+      `→ ${settings.punishment}`
+  );
+
+  // Persist live Nitrado ids before any DB-based moderation helpers run.
+  if (profile?.id || gamertag) {
+    upsertPlayer(guildId, {
+      gamertag,
+      characterName: profile?.characterName,
+      specimenImplant: profile?.specimenImplant,
+      nitradoPlayerId: kickTarget.nitradoPlayerId,
+      platformId: kickTarget.platformId,
+      map: kickTarget.map,
+      serviceId: kickTarget.serviceId,
+      serverName: serverName || null,
+      online: true,
+    });
   }
 
   const punishment = settings.punishment;
@@ -281,57 +361,137 @@ async function handleGamerscoreJoin(discordGuild, guildId, {
         ? `Temp ban (${settings.durationMinutes}m)`
         : 'Permanent ban'
       : 'Kick';
-
+  let punishOk = false;
+  let nitrado = null;
   let moderateResult = null;
-  if (profile?.id) {
-    const banArgs =
-      punishment === 'ban'
-        ? settings.durationMinutes > 0
-          ? {
-              durationValue: 'custom',
-              durationLabel: `${settings.durationMinutes} minute${
-                settings.durationMinutes === 1 ? '' : 's'
-              }`,
-              durationMs: settings.durationMinutes * 60 * 1000,
-            }
-          : {
-              durationValue: 'perm',
-              durationLabel: 'Permanent',
-              durationMs: null,
-            }
-        : {};
+  const reason = `Gamerscore ${score} below minimum ${settings.minScore}`;
 
-    moderateResult = await moderatePlayer(discordGuild, {
-      profileId: profile.id,
-      action: punishment === 'ban' ? 'ban' : 'kick',
-      moderator: botModerator(discordGuild),
-      reason: `Gamerscore ${lookup.gamerscore} below minimum ${settings.minScore}`,
-      ...banArgs,
-    });
+  try {
+    if (punishment === 'kick') {
+      // Kick with the live join payload (nitradoPlayerId + serviceId) — do not
+      // re-fetch via moderatePlayer first (that path can miss join-time ids and
+      // then no-op / fail after OpenXBL latency).
+      nitrado = await kickPlayerOnCluster(guild, kickTarget);
+      // Require a real successful Nitrado kick — empty/fake server lists are failures.
+      punishOk = Boolean(nitrado?.ok && nitrado.anyOk);
+      console.log(
+        `[gamerscore] kick result gt=${gamertag} ok=${Boolean(nitrado?.ok)} ` +
+          `anyOk=${Boolean(nitrado?.anyOk)} ` +
+          `nitradoPlayerId=${kickTarget.nitradoPlayerId || '(none)'} ` +
+          `summary=${nitrado?.summary || nitrado?.error || ''}`
+      );
 
-    if (!moderateResult.ok) {
-      actionLabel = `${actionLabel} failed: ${moderateResult.error || 'unknown'}`;
-    } else if (moderateResult.nitrado?.summary) {
-      actionLabel = `${actionLabel} — ${moderateResult.nitrado.summary}`;
+      if (!punishOk) {
+        actionLabel = `Kick failed: ${nitrado?.error || nitrado?.summary || 'unknown'}`;
+      } else if (nitrado.summary) {
+        actionLabel = `Kick — ${nitrado.summary}`;
+      }
+
+      if (punishOk) {
+        const stamp = new Date().toISOString();
+        const moderator = botModerator(discordGuild);
+        const noteLine = `[${stamp}] KICK by ${moderator.tag}: ${reason}`;
+        upsertPlayer(guildId, {
+          gamertag,
+          characterName: kickTarget.characterName,
+          specimenImplant: kickTarget.specimenImplant,
+          nitradoPlayerId: kickTarget.nitradoPlayerId,
+          platformId: kickTarget.platformId,
+          map: kickTarget.map,
+          serviceId: kickTarget.serviceId,
+          online: false,
+          notes: [profile?.notes, noteLine].filter(Boolean).join('\n').slice(0, 1000),
+        });
+        await logKick(discordGuild, {
+          targetGamertag: playerName,
+          gamertag,
+          characterName: kickTarget.characterName,
+          specimenImplant: kickTarget.specimenImplant,
+          reason,
+          map: kickTarget.map,
+          moderatorId: moderator.id,
+          moderatorTag: `${moderator}`,
+        }).catch((err) =>
+          console.warn(`[gamerscore] kick log forum failed: ${err.message}`)
+        );
+      }
+    } else {
+      // Ban: prefer full moderatePlayer (banlist + ban store + logs). Fall back to
+      // direct Nitrado ban if profile id is missing.
+      if (profile?.id) {
+        const banArgs =
+          settings.durationMinutes > 0
+            ? {
+                durationValue: 'custom',
+                durationLabel: `${settings.durationMinutes} minute${
+                  settings.durationMinutes === 1 ? '' : 's'
+                }`,
+                durationMs: settings.durationMinutes * 60 * 1000,
+              }
+            : {
+                durationValue: 'perm',
+                durationLabel: 'Permanent',
+                durationMs: null,
+              };
+
+        moderateResult = await moderatePlayer(discordGuild, {
+          profileId: profile.id,
+          action: 'ban',
+          moderator: botModerator(discordGuild),
+          reason,
+          ...banArgs,
+        });
+        punishOk = Boolean(moderateResult?.ok);
+        nitrado = moderateResult?.nitrado || null;
+        if (!punishOk) {
+          actionLabel = `${actionLabel} failed: ${moderateResult?.error || 'unknown'}`;
+        } else if (nitrado?.summary) {
+          actionLabel = `${actionLabel} — ${nitrado.summary}`;
+        }
+      } else {
+        nitrado = await banPlayerOnCluster(guild, kickTarget);
+        punishOk = Boolean(nitrado?.ok && nitrado.anyOk);
+        if (!punishOk) {
+          actionLabel = `Ban failed: ${nitrado?.error || nitrado?.summary || 'unknown'}`;
+        } else if (nitrado.summary) {
+          actionLabel = `Ban — ${nitrado.summary}`;
+        }
+      }
+      console.log(
+        `[gamerscore] ban result gt=${gamertag} ok=${punishOk} ` +
+          `summary=${nitrado?.summary || moderateResult?.error || ''}`
+      );
     }
-  } else {
-    actionLabel = `${actionLabel} skipped (no profile id)`;
+  } catch (error) {
+    punishOk = false;
+    actionLabel = `${actionLabel} failed: ${error.message || 'unknown'}`;
+    console.warn(
+      `[gamerscore] punish threw gt=${gamertag}: ${error.message}`
+    );
+  }
+
+  if (!punishOk && punishment === 'kick' && !kickTarget.nitradoPlayerId) {
+    actionLabel = `${actionLabel} (missing nitradoPlayerId on join payload)`;
   }
 
   await postDetectionLog(discordGuild, guildId, {
     outcome: 'punish',
     playerName,
-    gamerscore: lookup.gamerscore,
+    gamerscore: score,
     minScore: settings.minScore,
     action: actionLabel,
     mapServer,
-  }).catch((err) => console.warn('Gamerscore log failed:', err.message));
+    note: punishOk
+      ? null
+      : `Punishment did not complete. ${actionLabel}`,
+  }).catch((err) => console.warn('[gamerscore] log failed:', err.message));
 
   return {
-    ok: Boolean(moderateResult?.ok),
+    ok: punishOk,
     pass: false,
-    gamerscore: lookup.gamerscore,
+    gamerscore: score,
     punishment,
+    nitrado,
     moderateResult,
   };
 }

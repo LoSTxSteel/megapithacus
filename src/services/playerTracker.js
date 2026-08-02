@@ -72,35 +72,47 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
       { joined: isJoin }
     );
 
-    if (isJoin && discordGuild) {
-      if (wantsJoinLeave) {
-        const posted = await postJoinLeave(discordGuild, guildId, serviceId, {
-          type: 'join',
-          profile,
-          mapName,
-          serverName: server.name,
-        }).catch((err) => {
-          console.warn(`[playerTracker] join log failed: ${err.message}`);
-          return { ok: false, reason: 'error' };
-        });
-        if (posted && !posted.ok && posted.reason === 'no_thread') {
-          warnSkipOnce(
-            guildId,
-            `joinLeaveLogs missing map thread for serviceId=${serviceId} — Sync servers / Feature Setup`
-          );
-        }
-      }
-      // Never await gamerscore on the join/leave path — OpenXBL can hang and stall polls.
-      if (wantsGamerscore) {
-        void handleGamerscoreJoin(discordGuild, guildId, {
-          profile,
-          mapName,
-          serverName: server.name,
-          serviceId,
-        }).catch((err) =>
-          console.warn(`[playerTracker] gamerscore detection failed: ${err.message}`)
+    if (isJoin && discordGuild && wantsJoinLeave) {
+      const posted = await postJoinLeave(discordGuild, guildId, serviceId, {
+        type: 'join',
+        profile,
+        mapName,
+        serverName: server.name,
+      }).catch((err) => {
+        console.warn(`[playerTracker] join log failed: ${err.message}`);
+        return { ok: false, reason: 'error' };
+      });
+      if (posted && !posted.ok && posted.reason === 'no_thread') {
+        warnSkipOnce(
+          guildId,
+          `joinLeaveLogs missing map thread for serviceId=${serviceId} — Sync servers / Feature Setup`
         );
       }
+    }
+
+    // Gamerscore: true joins + bootstrap snapshot (bot restart must still kick
+    // low-score players already online). Never await — OpenXBL can stall polls.
+    const shouldCheckGamerscore =
+      wantsGamerscore &&
+      discordGuild &&
+      key &&
+      (isJoin || isBootstrap);
+    if (shouldCheckGamerscore) {
+      console.log(
+        `[playerTracker] gamerscore queue guild=${guildId} ` +
+          `gt=${profile.gamertag || '(none)'} join=${isJoin} bootstrap=${isBootstrap} ` +
+          `nitradoPlayerId=${profile.nitradoPlayerId || '(none)'} serviceId=${serviceId}`
+      );
+      void handleGamerscoreJoin(discordGuild, guildId, {
+        profile,
+        mapName,
+        serverName: server.name,
+        serviceId,
+      }).catch((err) =>
+        console.warn(
+          `[playerTracker] gamerscore detection failed: ${err?.stack || err.message || err}`
+        )
+      );
     }
   }
 
@@ -137,6 +149,14 @@ async function scanGuild(client, guildId) {
     warnSkipOnce(
       guildId,
       'joinLeaveLogs enabled but not configured (missing forum/threads — run Feature Setup)'
+    );
+  }
+
+  const gamerscoreEnabled = isFeatureEnabled(guild, 'gamerscoreDetection');
+  if (gamerscoreEnabled && !wantsGamerscore) {
+    warnSkipOnce(
+      guildId,
+      'gamerscoreDetection enabled but not configured (missing #gamerscore-detection — run Feature Setup)'
     );
   }
 

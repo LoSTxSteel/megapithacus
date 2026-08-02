@@ -307,10 +307,22 @@ async function kickOnService(server, token, profile) {
   if (nitradoId) {
     try {
       await kickOnlinePlayer(server.serviceId, token, nitradoId);
+      console.log(
+        `[nitrado] Player Management kick ok service=${server.serviceId} playerId=${nitradoId}`
+      );
       return;
-    } catch {
+    } catch (error) {
+      console.warn(
+        `[nitrado] Player Management kick failed service=${server.serviceId} ` +
+          `playerId=${nitradoId}: ${error.message || error}`
+      );
       // Fall through to console commands
     }
+  } else {
+    console.warn(
+      `[nitrado] kick: no nitradoPlayerId for gt=${profile?.gamertag || '?'} ` +
+        `service=${server.serviceId} — trying console KickPlayer`
+    );
   }
 
   const online =
@@ -378,6 +390,17 @@ async function kickPlayerOnCluster(guild, profile) {
       error:
         `Nitrado kick failed on all servers.\n${summary.summary}` +
         '\n_Note: the gameserver must be online for kicks to reach the application._',
+      identifier,
+      ...summary,
+    };
+  }
+
+  if (summary.noRealServers || !summary.anyOk) {
+    return {
+      ok: false,
+      error:
+        summary.summary ||
+        'Nitrado kick did not reach any live gameserver (check tokens / server sync).',
       identifier,
       ...summary,
     };

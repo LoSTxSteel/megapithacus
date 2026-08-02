@@ -640,7 +640,8 @@ function isFeatureConfigured(guild, key) {
     return Boolean(destId);
   }
   if (TEXT_LOG_FEATURES.has(key)) {
-    return Boolean(setup.ready && setup.channelId);
+    // Channel is enough — ready may be missing on older guild JSON.
+    return Boolean(setup.channelId);
   }
   return Boolean(setup.forumId);
 }
