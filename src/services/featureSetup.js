@@ -627,7 +627,10 @@ function isFeatureEnabled(guild, key) {
 function isFeatureConfigured(guild, key) {
   if (MAP_FORUM_FEATURES.has(key)) {
     const setup = guild.featureSetup?.[key];
-    return Boolean(setup?.ready && setup?.forumId);
+    if (!setup?.forumId) return false;
+    if (setup.ready) return true;
+    // Migration: forum + per-map threads without an explicit ready flag
+    return Object.keys(setup.threads || {}).length > 0;
   }
   const setup = guild.featureSetup?.[key];
   if (!setup) return false;

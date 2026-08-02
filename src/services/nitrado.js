@@ -722,14 +722,92 @@ async function getServiceLogs(serviceId, token, page = 1) {
   }
 }
 
+async function listFileBookmarks(serviceId, token) {
+  try {
+    const data = await apiGet(
+      `/services/${serviceId}/gameservers/file_server/bookmarks`,
+      token
+    );
+    return data.bookmarks || data || [];
+  } catch {
+    return [];
+  }
+}
+
+const LOG_TAIL_BYTES = 160000;
+const MAX_LOG_FILES = 4;
+
+/**
+ * Score ASE game-log candidates.
+ * AdminCmd / chat / join lines live in ServerGame*.log when -servergamelog is on;
+ * ShooterGame.log is the UE log (sometimes also has chat). Prefer current files over
+ * rotated ShooterGame_2.log archives (localeCompare sorting picked those wrongly).
+ */
+function scoreGameLogEntry(entry) {
+  const name = String(entry?.name || entry?.path || '')
+    .split(/[/\\]/)
+    .pop()
+    .toLowerCase();
+  if (!name.endsWith('.log')) return 0;
+  if (name === 'servergame.log') return 500;
+  if (name === 'shootergame.log') return 400;
+  if (/^servergame[\._-]/i.test(name)) return 300;
+  if (/^shootergame(_\d+)?\.log$/i.test(name)) return 100;
+  if (/gamelog|admin.*\.log$/i.test(name)) return 200;
+  return 0;
+}
+
+function pickGameLogFiles(entries, limit = MAX_LOG_FILES) {
+  return (entries || [])
+    .filter((e) => e && e.type === 'file' && scoreGameLogEntry(e) > 0)
+    .sort((a, b) => {
+      const scoreDiff = scoreGameLogEntry(b) - scoreGameLogEntry(a);
+      if (scoreDiff) return scoreDiff;
+      const mt =
+        Number(b.modified_at || b.mtime || 0) - Number(a.modified_at || a.mtime || 0);
+      if (mt) return mt;
+      return Number(b.size || 0) - Number(a.size || 0);
+    })
+    .slice(0, limit);
+}
+
+async function readLogFileTail(serviceId, token, entry, baseDir) {
+  const filePath = entry.path || `${baseDir}/${entry.name}`;
+  const size = Number(entry.size || 0);
+  const offset = size > LOG_TAIL_BYTES ? size - LOG_TAIL_BYTES : 0;
+  if (offset > 0) {
+    return seekFileText(serviceId, token, filePath, offset, LOG_TAIL_BYTES);
+  }
+  return downloadFileText(serviceId, token, filePath);
+}
+
+function logsDirCandidates(username, game, bookmarks = []) {
+  const dirs = [];
+  if (username && game) {
+    dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/Logs`);
+    dirs.push(`/games/${username}/noftp/${game}/ShooterGame/Saved/SaveGames/Logs`);
+  }
+  for (const raw of bookmarks) {
+    const path = typeof raw === 'string' ? raw : raw?.path || raw?.dir || '';
+    if (!path) continue;
+    if (/\/logs\/?$/i.test(path) || /Saved\/Logs/i.test(path)) {
+      dirs.push(path.replace(/\/$/, ''));
+    }
+  }
+  return [...new Set(dirs)];
+}
+
 /**
  * Best-effort ASE log text from a Nitrado service (Xbox / Microsoft Store).
+ * Pulls ServerGame.log (AdminCmd + chat) and ShooterGame.log tails.
  */
 async function fetchGameLogText(serviceId, token) {
   const gameserver = await getGameserver(serviceId, token);
   const username = gameserver.username || gameserver.user_name;
   const game = gameserver.game;
   const chunks = [];
+  const fetchedNames = [];
+  let listError = null;
 
   const serviceLogs = await getServiceLogs(serviceId, token, 1);
   if (Array.isArray(serviceLogs) && serviceLogs.length) {
@@ -740,37 +818,52 @@ async function fetchGameLogText(serviceId, token) {
     );
   }
 
-  if (username && game) {
-    const base = `/games/${username}/noftp/${game}/ShooterGame/Saved/Logs`;
-    try {
-      const entries = await listFiles(serviceId, token, base);
-      const logFiles = entries
-        .filter((e) => e.type === 'file' && /shootergame.*\.log$/i.test(e.name || e.path || ''))
-        .sort((a, b) => String(b.name || b.path).localeCompare(String(a.name || a.path)));
+  const bookmarks = await listFileBookmarks(serviceId, token);
+  const dirs = logsDirCandidates(username, game, bookmarks);
 
-      const target = logFiles[0];
-      if (target) {
-        const filePath = target.path || `${base}/${target.name}`;
-        try {
-          const size = Number(target.size || 0);
-          const offset = size > 120000 ? size - 120000 : 0;
-          const text =
-            offset > 0
-              ? await seekFileText(serviceId, token, filePath, offset, 120000)
-              : await downloadFileText(serviceId, token, filePath);
-          chunks.push(text);
-        } catch {
-          // ignore single-file failures
-        }
-      }
-    } catch {
-      // Logs folder may be unavailable on some Xbox products
+  for (const base of dirs) {
+    let entries;
+    try {
+      entries = await listFiles(serviceId, token, base);
+    } catch (error) {
+      listError = error.message;
+      continue;
     }
+
+    const targets = pickGameLogFiles(entries);
+    if (!targets.length) continue;
+
+    for (const target of targets) {
+      const label = target.name || target.path || 'log';
+      try {
+        const text = await readLogFileTail(serviceId, token, target, base);
+        if (text && text.trim()) {
+          chunks.push(text);
+          fetchedNames.push(label);
+        }
+      } catch (error) {
+        console.warn(
+          `[nitrado] log read failed serviceId=${serviceId} file=${label}: ${error.message}`
+        );
+      }
+    }
+
+    // One successful Logs directory is enough
+    if (fetchedNames.length) break;
+  }
+
+  if (!fetchedNames.length && (username || game)) {
+    console.warn(
+      `[nitrado] no ASE game logs found serviceId=${serviceId}` +
+        ` username=${username || '?'} game=${game || '?'}` +
+        (listError ? ` listError=${listError}` : '')
+    );
   }
 
   return {
     gameserver,
     text: chunks.join('\n'),
+    logFiles: fetchedNames,
   };
 }
 
@@ -805,5 +898,8 @@ module.exports = {
   downloadFileText,
   seekFileText,
   getServiceLogs,
+  listFileBookmarks,
   fetchGameLogText,
+  pickGameLogFiles,
+  scoreGameLogEntry,
 };

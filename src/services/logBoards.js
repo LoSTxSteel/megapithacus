@@ -4,6 +4,7 @@ const {
   isFeatureConfigured,
   ensureMapForums,
   getMapFeatureThread,
+  countMapLogThreads,
 } = require('./featureSetup');
 const {
   collectPerMapLogs,
@@ -13,6 +14,10 @@ const {
 
 const INTERVAL_MS = 5 * 60 * 1000;
 let timer = null;
+
+/** Warn once per guild/feature/service about missing threads (avoid 5m spam). */
+const missingThreadWarned = new Set();
+const skipConfiguredWarned = new Set();
 
 function persistThreadMessageId(guildId, featureKey, serviceId, entry, messageId) {
   const guild = getGuild(guildId);
@@ -27,10 +32,28 @@ function persistThreadMessageId(guildId, featureKey, serviceId, entry, messageId
 async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId, embed) {
   const guild = getGuild(guildId);
   const entry = getMapFeatureThread(guild, serviceId, featureKey);
-  if (!entry?.threadId) return;
+  if (!entry?.threadId) {
+    const warnKey = `${guildId}:${featureKey}:${serviceId}`;
+    if (!missingThreadWarned.has(warnKey)) {
+      missingThreadWarned.add(warnKey);
+      console.warn(
+        `[logBoards] ${featureKey} missing map thread guild=${guildId} serviceId=${serviceId} — run Feature Setup or Sync servers`
+      );
+    }
+    return;
+  }
 
   const thread = await discordGuild.channels.fetch(entry.threadId).catch(() => null);
-  if (!thread) return;
+  if (!thread) {
+    const warnKey = `gone:${guildId}:${featureKey}:${serviceId}`;
+    if (!missingThreadWarned.has(warnKey)) {
+      missingThreadWarned.add(warnKey);
+      console.warn(
+        `[logBoards] ${featureKey} thread gone guild=${guildId} serviceId=${serviceId} threadId=${entry.threadId}`
+      );
+    }
+    return;
+  }
 
   try {
     const message = entry.messageId
@@ -47,27 +70,51 @@ async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId
       persistThreadMessageId(guildId, featureKey, serviceId, entry, sent.id);
     }
   } catch (error) {
-    console.warn(`${featureKey}/${serviceId} refresh failed:`, error.message);
+    console.warn(
+      `[logBoards] ${featureKey}/${serviceId} refresh failed guild=${guildId}: ${error.message}`
+    );
   }
 }
 
 async function syncMapForums(discordGuild, guildId) {
   const guild = getGuild(guildId);
   try {
+    // Do not pass softMaps — empty discovery must throw (caught below) so we
+    // never overwrite existing threads with an empty map.
     const ensured = await ensureMapForums(discordGuild, guild);
     if (ensured.discovered?.length) {
       syncServersFromNitrado(guildId, ensured.discovered);
     }
     return getGuild(guildId);
   } catch (error) {
-    console.warn(`Map log forum sync skipped (${guildId}):`, error.message);
+    console.warn(`[logBoards] map forum sync skipped guild=${guildId}: ${error.message}`);
     return guild;
   }
 }
 
+/**
+ * Feature enabled + (configured OR has forum) — sync first so migration can set ready/threads.
+ */
+function shouldRefreshMapLogs(guild, featureKey) {
+  if (!isFeatureEnabled(guild, featureKey)) return false;
+  if (isFeatureConfigured(guild, featureKey)) return true;
+  const setup = guild.featureSetup?.[featureKey];
+  // Soft-allow: forum exists or map threads already stored (pre-ready migration)
+  return Boolean(setup?.forumId || countMapLogThreads(guild, featureKey));
+}
+
 async function refreshAdminBoard(client, guildId) {
   const guild = getGuild(guildId);
-  if (!isFeatureEnabled(guild, 'adminLogging') || !isFeatureConfigured(guild, 'adminLogging')) {
+  if (!isFeatureEnabled(guild, 'adminLogging')) return;
+
+  if (!shouldRefreshMapLogs(guild, 'adminLogging')) {
+    const key = `${guildId}:adminLogging`;
+    if (!skipConfiguredWarned.has(key)) {
+      skipConfiguredWarned.add(key);
+      console.warn(
+        `[logBoards] adminLogging enabled but not set up guild=${guildId} — run Setup on Admin Logging`
+      );
+    }
     return;
   }
 
@@ -75,11 +122,29 @@ async function refreshAdminBoard(client, guildId) {
   if (!discordGuild) return;
 
   const guildFresh = await syncMapForums(discordGuild, guildId);
+  if (!countMapLogThreads(guildFresh, 'adminLogging')) {
+    const key = `${guildId}:adminLogging:nothreads`;
+    if (!skipConfiguredWarned.has(key)) {
+      skipConfiguredWarned.add(key);
+      console.warn(
+        `[logBoards] adminLogging has no map threads guild=${guildId} — Sync servers / Feature Setup`
+      );
+    }
+    return;
+  }
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
       ? await collectPerMapLogs(guildFresh)
       : { byMap: {}, errors: ['Add Nitrado token first'] };
+
+  if (collected.errors?.length) {
+    console.warn(
+      `[logBoards] adminLogging pull errors guild=${guildId}: ${collected.errors
+        .slice(0, 5)
+        .join('; ')}`
+    );
+  }
 
   for (const server of guildFresh.servers || []) {
     const serviceId = String(server.serviceId);
@@ -106,7 +171,16 @@ async function refreshAdminBoard(client, guildId) {
 
 async function refreshChatBoard(client, guildId) {
   const guild = getGuild(guildId);
-  if (!isFeatureEnabled(guild, 'chatLogs') || !isFeatureConfigured(guild, 'chatLogs')) {
+  if (!isFeatureEnabled(guild, 'chatLogs')) return;
+
+  if (!shouldRefreshMapLogs(guild, 'chatLogs')) {
+    const key = `${guildId}:chatLogs`;
+    if (!skipConfiguredWarned.has(key)) {
+      skipConfiguredWarned.add(key);
+      console.warn(
+        `[logBoards] chatLogs enabled but not set up guild=${guildId} — run Setup on Chat Logs`
+      );
+    }
     return;
   }
 
@@ -114,6 +188,9 @@ async function refreshChatBoard(client, guildId) {
   if (!discordGuild) return;
 
   const guildFresh = await syncMapForums(discordGuild, guildId);
+  if (!countMapLogThreads(guildFresh, 'chatLogs')) {
+    return;
+  }
 
   const collected =
     (guildFresh.nitradoAccounts || []).length
@@ -153,7 +230,7 @@ async function refreshAllLogBoards(client) {
     try {
       await refreshGuildLogBoards(client, guildId);
     } catch (error) {
-      console.warn(`Log boards error (${guildId}):`, error.message);
+      console.warn(`[logBoards] error guild=${guildId}: ${error.message}`);
     }
   }
 }
@@ -162,12 +239,12 @@ function startLogBoards(client) {
   if (timer) clearInterval(timer);
   setTimeout(() => {
     refreshAllLogBoards(client).catch((err) =>
-      console.warn('Log boards startup refresh:', err.message)
+      console.warn('[logBoards] startup refresh:', err.message)
     );
   }, 20_000);
   timer = setInterval(() => {
     refreshAllLogBoards(client).catch((err) =>
-      console.warn('Log boards interval:', err.message)
+      console.warn('[logBoards] interval:', err.message)
     );
   }, INTERVAL_MS);
   console.log('Log boards scheduler started (every 5 minutes · 3 forums · per-map threads)');

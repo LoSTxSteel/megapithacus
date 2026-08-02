@@ -22,17 +22,35 @@ function isChatBody(body) {
   return /^[^:]{2,64}(?:\s+\([^)]{1,64}\))?\s*:\s+\S/.test(text);
 }
 
+function isAdminLine(lower, trimmed) {
+  if (
+    /admincmd|admincheat|admin\s*command|logarkadmin|used\s+cheat|used\s+admin/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  // Broad cheat / spectator patterns — avoid matching ordinary chat about "cheaters"
+  if (
+    /(?:^|[\s:])(?:cheat|admincheat)\s+\S/i.test(trimmed) ||
+    /\b(?:godmode|enablespectator|forceplayertojoin|destroyall|setadminplayer|enablescript)\b/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  // Xbox / AdminLogging broadcast style: "SERVER: Foo used cheat Bar"
+  if (/\bused\s+(?:admin\s+)?cheat\b/i.test(lower)) return true;
+  return false;
+}
+
 function classifyLine(line) {
   const trimmed = line.trim();
   if (!trimmed || trimmed.length < 4) return null;
 
   const lower = trimmed.toLowerCase();
 
-  if (
-    /admincmd|admin command|cheat\s|used cheat|godmode|fly\b|ghost\b|enablespectator|forceplayer|destroyall|setadmin/i.test(
-      lower
-    )
-  ) {
+  if (isAdminLine(lower, trimmed)) {
     return { type: 'admin', text: trimmed };
   }
 
@@ -43,12 +61,16 @@ function classifyLine(line) {
     return { type: 'chat', text: trimmed };
   }
 
-  // Gamertag: message style (avoid tribe ID system lines)
-  if (/^\s*[^:]{2,32}:\s+.+$/.test(trimmed) && !/tribe\s+.+,?\s*id\s*\d+/i.test(trimmed)) {
+  // Gamertag: message style (avoid tribe ID / join-leave / kill system lines)
+  if (
+    /^\s*[^:]{2,32}:\s+.+$/.test(trimmed) &&
+    !/tribe\s+.+,?\s*id\s*\d+/i.test(trimmed) &&
+    !/joined this ark|left this ark|was killed|tamed a/i.test(trimmed)
+  ) {
     return { type: 'chat', text: trimmed };
   }
 
-  // Timestamp-prefixed chat (common in ShooterGame.log)
+  // Timestamp-prefixed chat (common in ShooterGame / ServerGame logs)
   const stripped = stripChatChannelPrefix(stripLogPrefixes(trimmed));
   if (stripped && stripped !== trimmed && isChatBody(stripped)) {
     return { type: 'chat', text: trimmed };
@@ -86,9 +108,16 @@ function parseAdminFields(line) {
   let adminName = 'Unknown';
   let command = stripLogPrefixes(line);
 
-  const adminCmd = line.match(
+  // Classic ASE: AdminCmd: god (PlayerName: Foo, ARKID: …, SteamID/UniqueNetId: …)
+  let adminCmd = line.match(
     /AdminCmd:\s*(.+?)\s*\(\s*PlayerName:\s*([^,)]+)/i
   );
+  if (!adminCmd) {
+    // Some Xbox builds omit the space or use AdminCheat:
+    adminCmd = line.match(
+      /AdminCheat:\s*(.+?)\s*\(\s*PlayerName:\s*([^,)]+)/i
+    );
+  }
   if (adminCmd) {
     command = adminCmd[1].trim();
     adminName = adminCmd[2].trim();
@@ -96,9 +125,24 @@ function parseAdminFields(line) {
     const playerName = line.match(/PlayerName:\s*([^,)]+)/i);
     if (playerName) adminName = playerName[1].trim();
 
-    const cheat = line.match(/(?:used\s+)?cheat\s+(.+)$/i);
-    if (cheat) command = cheat[1].trim();
+    // "Foo used cheat god" / "Foo used admin cheat GodMode"
+    const usedCheat = line.match(
+      /(?:^|[\s:])([^\s:]{2,64}?)\s+used\s+(?:admin\s+)?cheat\s*:?\s*(.+)$/i
+    );
+    if (usedCheat) {
+      adminName = usedCheat[1].trim();
+      command = usedCheat[2].trim();
+    } else {
+      const cheat = line.match(/(?:admin)?cheat\s+(.+)$/i);
+      if (cheat) command = cheat[1].trim();
+    }
   }
+
+  // Strip trailing id blobs left on the command when parentheses parsing failed
+  command = command
+    .replace(/\s*\(\s*PlayerName:.*$/i, '')
+    .replace(/\s*\(\s*UniqueNetId:.*$/i, '')
+    .trim();
 
   return {
     adminName: adminName.slice(0, 64) || 'Unknown',
@@ -209,7 +253,10 @@ async function collectPerMapLogs(guild) {
     }
 
     try {
-      const { gameserver, text } = await fetchGameLogText(serviceId, token);
+      const { gameserver, text, logFiles } = await fetchGameLogText(
+        serviceId,
+        token
+      );
       const mapName =
         extractMapName(gameserver, server.name) || server.name || serviceId;
       const parsed = parseLogText(text, mapName, serviceId);
@@ -217,8 +264,12 @@ async function collectPerMapLogs(guild) {
         name: mapName,
         chat: parsed.chat.slice(-40),
         admin: parsed.admin.slice(-40),
+        logFiles: logFiles || [],
       };
     } catch (error) {
+      console.warn(
+        `[gameLogs] guild pull failed serviceId=${serviceId} map=${server.name}: ${error.message}`
+      );
       byMap[serviceId] = {
         name: server.name,
         chat: [],
