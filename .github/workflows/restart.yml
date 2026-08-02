@@ -3,6 +3,7 @@ name: Restart Cybrancee bot on push
 on:
   push:
     branches: [main, cursor/admin-pay-board]
+  workflow_dispatch:
 
 jobs:
   restart:
@@ -10,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Upload the git-sync bootstrap so the host can pull the rest of the branch
-      # even if the panel still has a stale package from a manual zip upload.
-      - name: Upload bootstrap index.js to Cybrancee
+      # Private GitHub repos cannot be pulled by Cybrancee without a panel token.
+      # Push the runnable app (src/ + root index.js) via the panel file API instead.
+      - name: Pack and upload app to Cybrancee
         env:
           PANEL_URL: https://panel.cybrancee.com
           SERVER_ID: ${{ vars.SERVER_ID }}
@@ -23,18 +24,61 @@ jobs:
             echo "Missing SERVER_ID or PTERODACTYL_API_KEY — skipping file upload"
             exit 0
           fi
-          curl --fail-with-body -X POST \
-            "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/write?file=%2Findex.js" \
-            -H "Authorization: Bearer ${API_KEY}" \
-            -H "Accept: application/json" \
-            -H "Content-Type: text/plain" \
-            --data-binary @index.js
-          echo "Uploaded /index.js"
 
-      - name: Restart Cybrancee server
+          AUTH=( -H "Authorization: Bearer ${API_KEY}" -H "Accept: application/json" )
+
+          echo "Stopping server before deploy…"
+          curl --fail-with-body -sS -X POST \
+            "${PANEL_URL}/api/client/servers/${SERVER_ID}/power" \
+            "${AUTH[@]}" \
+            -H "Content-Type: application/json" \
+            -d '{"signal":"stop"}' || true
+          sleep 3
+
+          ARCHIVE=megapithacus-deploy.tgz
+          tar -czf "${ARCHIVE}" index.js package.json package-lock.json src
+          echo "Packed ${ARCHIVE} ($(wc -c < "${ARCHIVE}") bytes)"
+
+          UPLOAD_JSON=$(curl --fail-with-body -sS \
+            "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/upload?directory=%2F" \
+            "${AUTH[@]}")
+          UPLOAD_URL=$(printf '%s' "${UPLOAD_JSON}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attributes"]["url"])')
+          echo "Got Wings upload URL"
+
+          curl --fail-with-body -sS -X POST \
+            -F "files=@${ARCHIVE};filename=${ARCHIVE}" \
+            "${UPLOAD_URL}"
+          echo "Uploaded ${ARCHIVE}"
+
+          curl --fail-with-body -sS -X POST \
+            "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/decompress" \
+            "${AUTH[@]}" \
+            -H "Content-Type: application/json" \
+            -d "{\"root\":\"/\",\"file\":\"${ARCHIVE}\"}"
+          echo "Decompressed ${ARCHIVE}"
+
+          curl --fail-with-body -sS -X POST \
+            "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/delete" \
+            "${AUTH[@]}" \
+            -H "Content-Type: application/json" \
+            -d "{\"root\":\"/\",\"files\":[\"${ARCHIVE}\"]}" || true
+
+          # Ensure credit/reward command files landed
+          for f in credit.js creditview.js creditmanager.js rewardmanager.js; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "${PANEL_URL}/api/client/servers/${SERVER_ID}/files/contents?file=%2Fsrc%2Fcommands%2F${f}" \
+              "${AUTH[@]}" || true)
+            if [ "${CODE}" != "200" ]; then
+              echo "ERROR: /src/commands/${f} missing after deploy (HTTP ${CODE})"
+              exit 1
+            fi
+            echo "OK /src/commands/${f}"
+          done
+
+      - name: Start Cybrancee server
         uses: fjogeleit/http-request-action@v1.16.3
         with:
           url: 'https://panel.cybrancee.com/api/client/servers/${{ vars.SERVER_ID }}/power'
           method: 'POST'
           customHeaders: '{"Accept": "application/json", "Content-Type": "application/json", "Authorization": "Bearer ${{ secrets.PTERODACTYL_API_KEY }}"}'
-          data: '{"signal": "restart"}'
+          data: '{"signal": "start"}'

@@ -53,9 +53,16 @@ npm run deploy
 
 ## Git push → host update
 
-Pushing to `cursor/admin-pay-board` (or `main`) triggers a GitHub Action that uploads `index.js` and restarts the panel. On boot, that entry pulls the latest branch from GitHub (keeps `.env`, `data/`, `node_modules`).
+Pushing to `cursor/admin-pay-board` (or `main`) triggers a GitHub Action that:
 
-If the GitHub repo is **private**, set on the panel:
+1. Stops the panel process
+2. Uploads a deploy tarball (`index.js`, `package.json`, `src/`)
+3. Extracts it into `/home/container`
+4. Starts the bot again
+
+Slash commands (including `/credit`, `/creditview`, `/creditmanager`, `/rewardmanager`) re-register on ready.
+
+Optional: if you also set a GitHub token on the panel, root `index.js` can pull the branch on boot. This is **not required** — the Action upload is the primary path (needed because the repo is private).
 
 ```env
 MEGAPITHACUS_GIT_TOKEN=ghp_...

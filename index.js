@@ -1,9 +1,8 @@
 /**
  * Root entry for hosts that default to index.js (Cybrancee / Pterodactyl).
  *
- * On Pterodactyl/Cybrancee, pull the latest GitHub branch before boot so a
- * panel restart (from the GitHub Action) actually picks up new commands.
- * Local runs skip sync unless MEGAPITHACUS_GIT_SYNC=1.
+ * Primary update path: GitHub Action uploads a deploy tarball (src/ + this file)
+ * then restarts the panel. Optional GitHub sync runs only when a token is set.
  */
 const fs = require('fs');
 const path = require('path');
@@ -14,8 +13,15 @@ const DEFAULT_REPO = 'LoSTxSteel/megapithacus';
 const DEFAULT_BRANCH = 'cursor/admin-pay-board';
 
 function shouldSync() {
-  if (process.env.MEGAPITHACUS_GIT_SYNC === '1') return true;
   if (process.env.MEGAPITHACUS_GIT_SYNC === '0') return false;
+  const token =
+    process.env.MEGAPITHACUS_GIT_TOKEN ||
+    process.env.GITHUB_TOKEN ||
+    process.env.GH_TOKEN ||
+    '';
+  // Never attempt unauthenticated pulls — this repo is private.
+  if (!token) return false;
+  if (process.env.MEGAPITHACUS_GIT_SYNC === '1') return true;
   if (process.env.P_SERVER_UUID) return true;
   return ROOT.replace(/\\/g, '/') === '/home/container';
 }
@@ -67,7 +73,14 @@ async function downloadToFile(url, dest, token) {
 }
 
 async function syncFromGitHub() {
-  if (!shouldSync()) return;
+  if (!shouldSync()) {
+    if (!fs.existsSync(path.join(ROOT, 'src', 'index.js'))) {
+      console.warn(
+        'Git sync skipped (no MEGAPITHACUS_GIT_TOKEN). Relying on Action-deployed src/.'
+      );
+    }
+    return;
+  }
 
   const repo =
     process.env.MEGAPITHACUS_GIT_REPO ||
@@ -111,9 +124,7 @@ async function syncFromGitHub() {
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
 
-    const tarballUrl = token
-      ? `https://api.github.com/repos/${repo}/tarball/${encodeURIComponent(branch)}`
-      : `https://codeload.github.com/${repo}/tar.gz/refs/heads/${encodeURIComponent(branch)}`;
+    const tarballUrl = `https://api.github.com/repos/${repo}/tarball/${encodeURIComponent(branch)}`;
 
     console.log(`Git sync: downloading ${repo}@${branch} (${sha.slice(0, 7)})…`);
     await downloadToFile(tarballUrl, tarball, token);
@@ -133,8 +144,6 @@ async function syncFromGitHub() {
       '.env',
       'data',
       'node_modules',
-      'appPack.js',
-      'PACK_VERSION',
       '.git-sync-tmp',
       '.git-sync.tgz',
     ]);
@@ -177,25 +186,16 @@ async function syncFromGitHub() {
 
 function boot() {
   const srcEntry = path.join(ROOT, 'src', 'index.js');
-  const flatBoot = path.join(ROOT, 'boot.js');
-  if (fs.existsSync(srcEntry)) {
-    require(srcEntry);
-    return;
-  }
-  if (fs.existsSync(flatBoot)) {
-    require(flatBoot);
-    return;
-  }
-  // Legacy flat layout (commands/ next to this file)
-  if (fs.existsSync(path.join(ROOT, 'commands')) && fs.existsSync(path.join(ROOT, 'events'))) {
-    // Old flat packages used index.js as the real bot — cannot re-enter this file.
+  if (!fs.existsSync(srcEntry)) {
+    console.error('Megapithacus: src/index.js not found.');
     console.error(
-      'Megapithacus: found flat commands/ but no src/index.js. Upload a fresh package or set MEGAPITHACUS_GIT_SYNC=1 with network access.'
+      'Push to GitHub so the restart Action can upload the deploy tarball, or set MEGAPITHACUS_GIT_TOKEN.'
     );
     process.exit(1);
   }
-  console.error('Megapithacus: src/index.js not found after sync.');
-  process.exit(1);
+  // Do not fall back to legacy flat boot.js — that kept stale packs online
+  // and re-registered slash commands without credit/reward.
+  require(srcEntry);
 }
 
 syncFromGitHub()
