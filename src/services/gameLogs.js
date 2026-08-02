@@ -6,7 +6,11 @@ const { brand } = require('../config');
 
 const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
-const DESC_MAX = 3900;
+/** Matches logBoards scheduler — next-update countdown uses this interval. */
+const LOG_BOARD_INTERVAL_MS = 15 * 60 * 1000;
+/** Reserve room for the "Next update: <t:…:R>" suffix (Discord desc max 4096). */
+const NEXT_UPDATE_SUFFIX_MAX = 48;
+const DESC_MAX = 4096 - NEXT_UPDATE_SUFFIX_MAX;
 
 function isChatBody(body) {
   const text = String(body || '').trim();
@@ -508,6 +512,22 @@ function buildMapLogFooter(serverName, serviceId) {
   return `Server: ${name}\nID: ${id} - ${brand.name} - ${formatFooterStamp()}`;
 }
 
+/** Unix seconds for the next scheduled board refresh (Discord relative timestamp). */
+function nextRefreshUnix(intervalMs = LOG_BOARD_INTERVAL_MS, fromMs = Date.now()) {
+  return Math.floor((fromMs + intervalMs) / 1000);
+}
+
+/**
+ * Append a live Discord relative countdown. Timestamps only render in
+ * description/fields (not footers), so this goes at the description end.
+ */
+function withNextUpdateCountdown(description, intervalMs = LOG_BOARD_INTERVAL_MS) {
+  const suffix = `\n\nNext update: <t:${nextRefreshUnix(intervalMs)}:R>`;
+  const body = String(description || '');
+  const maxBody = Math.max(0, 4096 - suffix.length);
+  return `${body.slice(0, maxBody)}${suffix}`;
+}
+
 /**
  * Overseer-style Chat Logs embed for a map thread.
  */
@@ -520,7 +540,9 @@ function buildMapChatEmbed(serverName, serviceId, chatEntries, note, guild = nul
   return brandEmbed(
     new EmbedBuilder()
       .setTitle('Chat Logs')
-      .setDescription(formatChatDescription(chatEntries || [], empty)),
+      .setDescription(
+        withNextUpdateCountdown(formatChatDescription(chatEntries || [], empty))
+      ),
     guild,
     {
       color: ADMIN_LOG_COLOR,
@@ -544,7 +566,9 @@ function buildMapAdminEmbed(serverName, serviceId, gameAdminEntries, note, guild
   return brandEmbed(
     new EmbedBuilder()
       .setTitle('Admin Logs')
-      .setDescription(formatAdminDescription(gameAdminEntries || [], empty)),
+      .setDescription(
+        withNextUpdateCountdown(formatAdminDescription(gameAdminEntries || [], empty))
+      ),
     guild,
     {
       color: ADMIN_LOG_COLOR,
@@ -564,5 +588,8 @@ module.exports = {
   parseAdminFields,
   parseChatFields,
   groupAdminEntries,
+  nextRefreshUnix,
+  withNextUpdateCountdown,
   ADMIN_LOG_COLOR,
+  LOG_BOARD_INTERVAL_MS,
 };

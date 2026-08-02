@@ -68,11 +68,16 @@ function orderedResults(guildConfig, cluster) {
 
 function buildPopEmbed(guildConfig, cluster) {
   const blocks = orderedResults(guildConfig, cluster).map(formatServerBlock);
-  const description = cluster
+  const body = cluster
     ? blocks.length
       ? blocks.join('\n\n')
       : '_No synced servers._'
     : '_Unable to query servers. Check Server Setup tokens and sync._';
+
+  // Discord relative timestamps only render in description/fields (not footers).
+  const nextUnix = Math.floor((Date.now() + INTERVAL_MS) / 1000);
+  const suffix = `\n\nNext update: <t:${nextUnix}:R>`;
+  const description = `${String(body).slice(0, Math.max(0, 4096 - suffix.length))}${suffix}`;
 
   return brandEmbed(
     new EmbedBuilder()
