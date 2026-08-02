@@ -133,8 +133,8 @@ async function refreshChatBoard(client, guildId) {
       'chatLogs',
       serviceId,
       buildMapChatEmbed(
-        guildFresh.clusterName,
-        mapData.name || server.name,
+        server.name || mapData.name || serviceId,
+        serviceId,
         mapData.chat || [],
         mapData.error || 'OK',
         guildFresh

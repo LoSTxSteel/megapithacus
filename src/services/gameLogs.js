@@ -7,6 +7,21 @@ const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
 const DESC_MAX = 3900;
 
+function isChatBody(body) {
+  const text = String(body || '').trim();
+  if (!text || text.length < 4) return false;
+  if (/tribe\s+.+,?\s*id\s*\d+/i.test(text)) return false;
+  if (
+    /was killed|joined this ark|left this ark|tamed a|destroyed|tribelog/i.test(
+      text
+    )
+  ) {
+    return false;
+  }
+  // PlayerName (TribeOrChar): message  OR  PlayerName: message
+  return /^[^:]{2,64}(?:\s+\([^)]{1,64}\))?\s*:\s+\S/.test(text);
+}
+
 function classifyLine(line) {
   const trimmed = line.trim();
   if (!trimmed || trimmed.length < 4) return null;
@@ -30,6 +45,12 @@ function classifyLine(line) {
 
   // Gamertag: message style (avoid tribe ID system lines)
   if (/^\s*[^:]{2,32}:\s+.+$/.test(trimmed) && !/tribe\s+.+,?\s*id\s*\d+/i.test(trimmed)) {
+    return { type: 'chat', text: trimmed };
+  }
+
+  // Timestamp-prefixed chat (common in ShooterGame.log)
+  const stripped = stripChatChannelPrefix(stripLogPrefixes(trimmed));
+  if (stripped && stripped !== trimmed && isChatBody(stripped)) {
     return { type: 'chat', text: trimmed };
   }
 
@@ -86,6 +107,45 @@ function parseAdminFields(line) {
   };
 }
 
+function stripChatChannelPrefix(body) {
+  return String(body || '')
+    .replace(/^(?:serverchat|tribe chat|alliance chat)\s*:\s*/i, '')
+    .replace(/^\((?:global|local|tribe|alliance)\)\s*/i, '')
+    .replace(/^Chat\s*:\s*/i, '')
+    .replace(/^Day\s+\d+,\s+\d{1,2}:\d{2}:\d{2}:\s*/i, '')
+    .trim();
+}
+
+function parseChatFields(line) {
+  const atDate = parseArkTimestamp(line) || new Date();
+  let body = stripChatChannelPrefix(stripLogPrefixes(line));
+
+  let playerName = 'Unknown';
+  let tribeOrChar = null;
+  let message = body;
+
+  // PlayerName (TribeOrChar): message
+  let m = body.match(/^(.{1,64}?)\s+\(([^)]{1,64})\)\s*:\s*(.+)$/);
+  if (m) {
+    playerName = m[1].trim();
+    tribeOrChar = m[2].trim();
+    message = m[3].trim();
+  } else {
+    m = body.match(/^([^:]{1,64}?):\s*(.+)$/);
+    if (m) {
+      playerName = m[1].trim();
+      message = m[2].trim();
+    }
+  }
+
+  return {
+    playerName: playerName.slice(0, 64) || 'Unknown',
+    tribeOrChar: tribeOrChar ? tribeOrChar.slice(0, 64) : null,
+    message: (message || body).replace(/\r?\n/g, ' ').slice(0, 300),
+    at: atDate.toISOString(),
+  };
+}
+
 function parseLogText(text, mapName, serviceId) {
   const chat = [];
   const admin = [];
@@ -97,11 +157,15 @@ function parseLogText(text, mapName, serviceId) {
     if (!classified) continue;
 
     if (classified.type === 'chat') {
+      const fields = parseChatFields(classified.text);
       chat.push({
         map: mapName,
         serviceId,
         text: classified.text.slice(0, 300),
-        at: new Date().toISOString(),
+        playerName: fields.playerName,
+        tribeOrChar: fields.tribeOrChar,
+        message: fields.message,
+        at: fields.at,
       });
       continue;
     }
@@ -168,17 +232,55 @@ async function collectPerMapLogs(guild) {
   return { byMap, errors };
 }
 
-function formatLines(entries, emptyMessage) {
-  if (!entries.length) return emptyMessage;
-  return entries
-    .slice(-30)
-    .map((e) => `• ${e.text}`)
-    .join('\n')
-    .slice(0, DESC_MAX);
-}
-
 function escapeMdBold(name) {
   return String(name || 'Unknown').replace(/[*_`~|\\]/g, '\\$&');
+}
+
+function sanitizeInlineCode(value) {
+  return String(value || '')
+    .replace(/`/g, "'")
+    .replace(/\r?\n/g, ' ')
+    .trim();
+}
+
+function unixFromIso(at) {
+  const ms = Date.parse(at);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : Math.floor(Date.now() / 1000);
+}
+
+function formatChatLine(entry) {
+  const unix = unixFromIso(entry.at);
+  const player = escapeMdBold(entry.playerName || 'Unknown');
+  const message = String(entry.message || entry.text || '')
+    .replace(/\r?\n/g, ' ')
+    .trim();
+
+  if (entry.tribeOrChar) {
+    const tribe = sanitizeInlineCode(entry.tribeOrChar);
+    return `<t:${unix}:R> - **${player}** \`(${tribe})\` : ${message}`;
+  }
+
+  return `<t:${unix}:R> - **${player}** : ${message}`;
+}
+
+function formatChatDescription(entries, emptyMessage) {
+  if (!entries.length) return emptyMessage;
+
+  const recent = entries.slice(-40);
+  const lines = [];
+
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const line = formatChatLine(recent[i]);
+    const next = lines.length ? `${line}\n${lines.join('\n')}` : line;
+    if (next.length > DESC_MAX) break;
+    lines.unshift(line);
+  }
+
+  if (!lines.length) {
+    return formatChatLine(recent[recent.length - 1]).slice(0, DESC_MAX);
+  }
+
+  return lines.join('\n').slice(0, DESC_MAX);
 }
 
 function sanitizeCodeLine(cmd) {
@@ -256,26 +358,33 @@ function formatFooterStamp(date = new Date()) {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function buildAdminLogFooter(serverName, serviceId) {
+function buildMapLogFooter(serverName, serviceId) {
   const name = String(serverName || 'Server').slice(0, 180);
   const id = String(serviceId || '—');
   return `Server: ${name}\nID: ${id} - ${brand.name} - ${formatFooterStamp()}`;
 }
 
-function buildMapChatEmbed(clusterName, mapName, entries, note, guild = null) {
+/**
+ * Overseer-style Chat Logs embed for a map thread.
+ */
+function buildMapChatEmbed(serverName, serviceId, chatEntries, note, guild = null) {
+  const empty =
+    note && note !== 'OK'
+      ? `_${String(note).slice(0, 200)}_`
+      : '_No in-game chat lines found for this map in the latest Nitrado log pull._';
+
   return brandEmbed(
     new EmbedBuilder()
-      .setTitle(`${mapName} — Chat`)
-      .setDescription(
-        formatLines(entries, '_No in-game chat lines found for this map in the latest pull._')
-      )
-      .addFields(
-        { name: 'Cluster', value: clusterName, inline: true },
-        { name: 'Map', value: mapName, inline: true },
-        { name: 'Notes', value: note || 'OK', inline: true }
-      ),
+      .setTitle('Chat Logs')
+      .setDescription(formatChatDescription(chatEntries || [], empty)),
     guild,
-    { accent: true, context: 'Chat · every 10m' }
+    {
+      color: ADMIN_LOG_COLOR,
+      author: false,
+      timestamp: false,
+      footer: buildMapLogFooter(serverName, serviceId),
+      context: 'Chat log · every 10m',
+    }
   );
 }
 
@@ -297,7 +406,7 @@ function buildMapAdminEmbed(serverName, serviceId, gameAdminEntries, note, guild
       color: ADMIN_LOG_COLOR,
       author: false,
       timestamp: false,
-      footer: buildAdminLogFooter(serverName, serviceId),
+      footer: buildMapLogFooter(serverName, serviceId),
       context: 'Admin log · every 10m',
     }
   );
@@ -309,6 +418,7 @@ module.exports = {
   buildMapAdminEmbed,
   parseLogText,
   parseAdminFields,
+  parseChatFields,
   groupAdminEntries,
   ADMIN_LOG_COLOR,
 };
