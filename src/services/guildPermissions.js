@@ -18,7 +18,7 @@ const PERMISSION_AREAS = {
   rewardManager: {
     key: 'rewardManager',
     label: 'Reward manager',
-    description: 'Enable boost rewards and set the boost thank-you channel',
+    description: 'Configure boost and invite rewards (channels, credit, thresholds)',
     commandHint: '`/rewardmanager`',
   },
   creditManager: {

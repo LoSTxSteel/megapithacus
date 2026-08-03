@@ -27,7 +27,7 @@ function denyGamerscore(interaction) {
     embeds: [
       errorEmbed(
         'You do not have permission to manage gamerscore detection.\n' +
-          'Ask the server owner to grant your role with `/permissions set` → **Gamerscore manager**.'
+          'Ask the server owner to grant your role with `/permissions` → **Gamerscore manager**.'
       ),
     ],
     ...EPHEMERAL,

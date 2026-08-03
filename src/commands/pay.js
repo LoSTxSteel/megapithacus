@@ -8,7 +8,10 @@ const { ADMIN_ROLE_NAME } = require('../services/botSetup');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('pay')
-    .setDescription('View your admin pay balance, log work, and request payouts'),
+    .setDescription('View your admin pay balance, log work, and request payouts')
+    // Hidden from @everyone by default; Administrators still see it (Discord bypass).
+    // Pay roles are allowed via syncPayCommandPermissions (Bearer token / Integrations).
+    .setDefaultMemberPermissions(0n),
 
   async execute(interaction) {
     if (!canUsePay(interaction)) {

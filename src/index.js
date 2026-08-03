@@ -83,6 +83,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildInvites,
     GatewayIntentBits.DirectMessages,
   ],
   // Required so DM messageCreate / collectors work for uncached DM channels

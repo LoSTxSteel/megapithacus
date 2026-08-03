@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { baseEmbed } = require('../utils/embeds');
 const { EPHEMERAL } = require('../utils/ephemeral');
 const { brand } = require('../config');
@@ -6,9 +6,25 @@ const { brand } = require('../config');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('How to use Megapithacus'),
+    .setDescription('How to use Megapithacus')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
+    const canManage = interaction.memberPermissions?.has(
+      PermissionFlagsBits.ManageGuild
+    );
+    if (!canManage) {
+      await interaction.reply({
+        embeds: [
+          baseEmbed('Help', { context: 'Help' }).setDescription(
+            'Only members with **Manage Server** can view `/help`.'
+          ),
+        ],
+        ...EPHEMERAL,
+      });
+      return;
+    }
+
     const embed = baseEmbed('ASE Manager', { context: 'Help' })
       .setDescription(
         [
@@ -20,14 +36,14 @@ module.exports = {
         {
           name: 'Everyone',
           value: [
-            '`/help` — this message',
             '`/credit` — view your seasonal & permanent credit',
-            '`/pay` — admin pay balance, log events/tickets, request payouts (configured roles)',
+            '`/pay` — admin pay balance, log events/tickets, request payouts (configured roles only)',
           ].join('\n'),
         },
         {
           name: 'Admins',
           value: [
+            '`/help` — this message (Manage Server)',
             '`/setup` — wipe & recreate logging channels + **Megapithacus** admin role (server power)',
             '`/management` — admin hub:',
             '• **Admin Management** — authorised admins & event staff',
@@ -36,10 +52,10 @@ module.exports = {
             '• **Customise Bot** — colour & footer (watermark always stays)',
             '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat, Join/Leave, Gamerscore',
             '',
-            '`/rewardmanager` — boost rewards hub (enable, channel, amount, type)',
+            '`/rewardmanager` — boost & invite rewards hub',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
             "`/creditview` — view another user's credit balance",
-            '`/adminpay` — configure admin pay rates & review payout requests',
+            '`/adminpay` — configure admin pay rates, /pay roles & review payouts',
             '`/servermanager` — Nitrado hub (start/stop/restart, password, name)',
             '`/rollback` — restore Nitrado backup or dated SavedArks `.ark`',
             '`/upload` — upload a custom `.ark` save (Discord size limits apply)',
@@ -52,7 +68,7 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — set which roles can use Donations / Rewards / Credits / Gamerscore / Server power / Admin Pay (owner only)',
+            '`/permissions` — hub to set which roles can use Donations / Rewards / Credits / Gamerscore / Server power / Admin Pay (owner only)',
         },
         {
           name: 'Feature setup',

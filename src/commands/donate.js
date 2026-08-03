@@ -80,7 +80,7 @@ module.exports = {
         embeds: [
           errorEmbed(
             'You do not have permission to post the donation board.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+              'Ask the server owner to grant your role with `/permissions` → **Donations**.'
           ),
         ],
         ...EPHEMERAL,

@@ -7,7 +7,7 @@ const { errorEmbed } = require('../utils/embeds');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('rewardmanager')
-    .setDescription('Configure server boost credit rewards')
+    .setDescription('Configure boost and invite credit rewards')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
@@ -15,8 +15,8 @@ module.exports = {
       await interaction.reply({
         embeds: [
           errorEmbed(
-            'You do not have permission to manage boost rewards.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Reward manager**.'
+            'You do not have permission to manage rewards.\n' +
+              'Ask the server owner to grant your role with `/permissions` → **Reward manager**.'
           ),
         ],
         ...EPHEMERAL,

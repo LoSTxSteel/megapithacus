@@ -37,7 +37,7 @@ function denyDonate(interaction) {
     embeds: [
       errorEmbed(
         'You do not have permission to manage **Donations**.\n' +
-          'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+          'Ask the server owner to grant your role with `/permissions` → **Donations**.'
       ),
     ],
     ...EPHEMERAL,

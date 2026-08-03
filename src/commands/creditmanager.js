@@ -16,7 +16,7 @@ module.exports = {
         embeds: [
           errorEmbed(
             'You do not have permission to manage credits.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Credit manager**.'
+              'Ask the server owner to grant your role with `/permissions` → **Credit manager**.'
           ),
         ],
         ...EPHEMERAL,

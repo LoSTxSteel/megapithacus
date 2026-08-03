@@ -24,6 +24,7 @@ const { canManageAdminPay } = require('../services/guildPermissions');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
 const { getGuild } = require('../services/storage');
 const { ADMIN_ROLE_NAME } = require('../services/botSetup');
+const { syncPayCommandPermissions } = require('../services/payCommandPermissions');
 
 const PREFIX = 'adminpayhub:';
 
@@ -320,11 +321,26 @@ async function handleAdminPayInteraction(interaction) {
 
   if (interaction.isRoleSelectMenu() && id === `${PREFIX}roles`) {
     setPayRoleIds(guildId, interaction.values);
+    let syncNote = '';
+    try {
+      const sync = await syncPayCommandPermissions(interaction.guild);
+      if (sync.ok) {
+        syncNote = ` Synced /pay visibility for ${sync.roleAllows} role(s).`;
+      } else if (sync.reason === 'no_bearer') {
+        syncNote =
+          ' /pay stays Administrator-only in Discord until `DISCORD_COMMAND_PERMISSIONS_TOKEN` is set, or an admin enables the selected roles under **Server Settings → Integrations → Megapithacus → /pay**. Execute checks still enforce pay roles.';
+      } else if (sync.error) {
+        syncNote = ` Visibility sync note: ${sync.error}`;
+      }
+    } catch (error) {
+      syncNote = ` Visibility sync failed: ${error.message}`;
+    }
+
     await interaction.update(
       buildAdminPayMessage(guildId, {
         content: interaction.values.length
-          ? `Updated /pay roles (${interaction.values.length}).`
-          : 'Cleared /pay roles.',
+          ? `Updated /pay roles (${interaction.values.length}).${syncNote}`
+          : `Cleared /pay roles.${syncNote}`,
       })
     );
     return true;

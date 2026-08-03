@@ -135,7 +135,7 @@ async function handleDonateInteraction(interaction) {
         embeds: [
           errorEmbed(
             'Only **admin roles** with Donations access can log money received.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+              'Ask the server owner to grant your role with `/permissions` → **Donations**.'
           ),
         ],
         ...EPHEMERAL,
@@ -178,7 +178,7 @@ async function handleDonateInteraction(interaction) {
         embeds: [
           errorEmbed(
             'Only **admin roles** with Donations access can do this.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+              'Ask the server owner to grant your role with `/permissions` → **Donations**.'
           ),
         ],
         ...EPHEMERAL,
@@ -220,7 +220,7 @@ async function handleDonateInteraction(interaction) {
         embeds: [
           errorEmbed(
             'Only **admin roles** with Donations access can do this.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+              'Ask the server owner to grant your role with `/permissions` → **Donations**.'
           ),
         ],
         ...EPHEMERAL,
@@ -272,7 +272,7 @@ async function handleDonateInteraction(interaction) {
         embeds: [
           errorEmbed(
             'Only **admin roles** with Donations access can do this.\n' +
-              'Ask the server owner to grant your role with `/permissions set` → **Donations**.'
+              'Ask the server owner to grant your role with `/permissions` → **Donations**.'
           ),
         ],
         ...EPHEMERAL,

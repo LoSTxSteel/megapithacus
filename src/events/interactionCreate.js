@@ -3,7 +3,9 @@ const { EPHEMERAL } = require('../utils/ephemeral');
 const { errorEmbed } = require('../utils/embeds');
 const { handleManagement } = require('../management/hub');
 const { handlePlayerInteraction } = require('./playerInteractions');
-const { handlePermissionsInteraction } = require('../commands/permissions');
+const {
+  handlePermissionsHubInteraction,
+} = require('../management/permissionsHub');
 
 function isManagementInteraction(interaction) {
   const id = interaction.customId;
@@ -128,7 +130,7 @@ module.exports = {
         return;
       }
 
-      if (await handlePermissionsInteraction(interaction)) {
+      if (await handlePermissionsHubInteraction(interaction)) {
         return;
       }
 

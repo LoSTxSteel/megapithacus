@@ -7,6 +7,10 @@ const { startBanReminders } = require('../services/banReminders');
 const { startStatusRotation } = require('../services/statusRotation');
 const { startDeployNotify } = require('../services/deployNotify');
 const { deploySlashCommands } = require('../services/deploySlashCommands');
+const { cacheAllGuildInvites } = require('../services/inviteCache');
+const {
+  syncAllGuildPayCommandPermissions,
+} = require('../services/payCommandPermissions');
 
 function startScheduler(name, fn) {
   try {
@@ -55,6 +59,18 @@ module.exports = {
         console.error('Slash deploy details:', JSON.stringify(error.rawError));
       }
       if (error.stack) console.error(error.stack);
+    }
+
+    try {
+      await syncAllGuildPayCommandPermissions(client);
+    } catch (error) {
+      console.warn('Pay command permission sync failed:', error.message);
+    }
+
+    try {
+      await cacheAllGuildInvites(client);
+    } catch (error) {
+      console.warn('Invite cache warm-up failed:', error.message);
     }
   },
 };
