@@ -1,11 +1,11 @@
 const { getGuild, listGuildIds } = require('./storage');
 const {
   listPlayers,
-  getGameserver,
+  getGameserverCached,
   tokenForServer,
   extractMapName,
   isGuildHeavyPollPaused,
-  getGuildCooldownRemainingMs,
+  getGuildClusterSnapshot,
 } = require('./nitrado');
 const {
   upsertPlayer,
@@ -20,7 +20,9 @@ const {
   isGamerscoreChecked,
 } = require('./gamerscoreDetection');
 
-const INTERVAL_MS = 10 * 60 * 1000;
+const INTERVAL_MS = 15 * 60 * 1000;
+/** Stagger between servers so games/players is not burst. */
+const SERVICE_STAGGER_MS = 1500;
 let timer = null;
 
 // serviceId -> Set of profile keys last seen online
@@ -28,6 +30,10 @@ const previousOnline = new Map();
 
 /** Warn once per guild/reason (avoid interval spam). */
 const skipWarned = new Set();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function warnSkipOnce(guildId, reason) {
   const key = `${guildId}:${reason}`;
@@ -43,7 +49,8 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
   const serviceId = String(server.serviceId);
   let mapName = server.name;
   try {
-    const gs = await getGameserver(serviceId, token);
+    // Shared with queryService / pop snapshot (gameserver + players caches).
+    const gs = await getGameserverCached(serviceId, token);
     mapName = extractMapName(gs, server.name);
   } catch {
     // keep fallback map name
@@ -149,17 +156,19 @@ async function scanGuild(client, guildId) {
   }
 
   if (isGuildHeavyPollPaused(guild)) {
-    const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
-    const key = `${guildId}:rate_limited`;
-    if (!skipWarned.has(key)) {
-      skipWarned.add(key);
-      console.warn(
-        `Nitrado rate limited — pausing file/API polls for ${mins}m`
-      );
-    }
+    skipWarned.add(`${guildId}:rate_limited`);
     return;
   }
   skipWarned.delete(`${guildId}:rate_limited`);
+
+  // Warm shared cluster snapshot so listPlayers/getGameserver hit cache.
+  try {
+    await getGuildClusterSnapshot(guild, guildId);
+  } catch (error) {
+    console.warn(
+      `[playerTracker] cluster snapshot failed guild=${guildId}: ${error.message}`
+    );
+  }
 
   let discordGuild = null;
   const joinLeaveEnabled = isFeatureEnabled(guild, 'joinLeaveLogs');
@@ -197,7 +206,10 @@ async function scanGuild(client, guildId) {
     }
   }
 
-  for (const server of guild.servers) {
+  const servers = guild.servers || [];
+  for (let i = 0; i < servers.length; i += 1) {
+    if (i > 0) await sleep(SERVICE_STAGGER_MS);
+    const server = servers[i];
     try {
       await scanServer(
         client,
@@ -241,7 +253,7 @@ function startPlayerTracker(client) {
     );
   }, INTERVAL_MS);
 
-  console.log('[scheduler] playerTracker started (10m)');
+  console.log('[scheduler] playerTracker started (15m)');
 }
 
 module.exports = {

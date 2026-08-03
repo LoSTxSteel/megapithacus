@@ -1,14 +1,13 @@
 const { EmbedBuilder } = require('discord.js');
 const { getGuild, listGuildIds, updateGuild } = require('./storage');
 const {
-  queryCluster,
+  getGuildClusterSnapshot,
   isGuildHeavyPollPaused,
-  getGuildCooldownRemainingMs,
 } = require('./nitrado');
 const { brandEmbed } = require('../utils/embeds');
 const { isFeatureEnabled, isFeatureConfigured } = require('./featureSetup');
 
-const INTERVAL_MS = 15 * 60 * 1000;
+const INTERVAL_MS = 30 * 60 * 1000;
 let timer = null;
 
 /** Warn once per guild/reason (avoid interval spam). */
@@ -123,7 +122,7 @@ function buildPopEmbed(guildConfig, cluster) {
       .setTitle('Server Status & Population')
       .setDescription(description),
     guildConfig,
-    { accent: true, context: 'Server Status · every 10m' }
+    { accent: true, context: 'Server Status · every 30m' }
   );
 }
 
@@ -167,23 +166,14 @@ async function refreshGuildPop(client, guildId) {
 
   let cluster = null;
   if ((guildConfig.servers || []).length && (guildConfig.nitradoAccounts || []).length) {
+    // Shared snapshot — tracker/logs reuse the same cluster status pull.
+    // During 429 cooldown, returns stale snapshot / cached stubs (no stampede).
     if (isGuildHeavyPollPaused(guildConfig)) {
-      const mins = Math.max(
-        1,
-        Math.ceil(getGuildCooldownRemainingMs(guildConfig) / 60000)
-      );
-      const key = `${guildId}:rate_limited`;
-      if (!skipWarned.has(key)) {
-        skipWarned.add(key);
-        console.warn(
-          `Nitrado rate limited — pausing file/API polls for ${mins}m`
-        );
-      }
+      skipWarned.add(`${guildId}:rate_limited`);
     } else {
       skipWarned.delete(`${guildId}:rate_limited`);
     }
-    // queryService returns cached/stale status during cooldown (no stampede).
-    cluster = await queryCluster(guildConfig.servers, guildConfig);
+    cluster = await getGuildClusterSnapshot(guildConfig, guildId);
   }
 
   const embed = buildPopEmbed(guildConfig, cluster);
@@ -233,7 +223,7 @@ async function refreshAll(client) {
 
 function startPopManager(client) {
   if (timer) clearInterval(timer);
-  // First refresh shortly after boot, then every 15 minutes.
+  // First refresh shortly after boot, then every 30 minutes.
   setTimeout(() => {
     refreshAll(client).catch((err) =>
       console.warn('[popManager] startup refresh:', err.message)
@@ -244,7 +234,7 @@ function startPopManager(client) {
       console.warn('[popManager] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('[scheduler] popManager started (15m)');
+  console.log('[scheduler] popManager started (30m)');
 }
 
 module.exports = {

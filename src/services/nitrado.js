@@ -155,10 +155,24 @@ async function getGameserver(serviceId, token) {
   return data.gameserver || data;
 }
 
-async function listPlayers(serviceId, token) {
+async function listPlayers(serviceId, token, { force = false } = {}) {
+  const key = String(serviceId);
+  if (!force) {
+    const hit = playersListCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.players;
+  }
+  if (token && isGlobalRateLimited(token)) {
+    const hit = playersListCache.get(key);
+    return hit?.players ?? null;
+  }
   try {
     const data = await apiGet(`/services/${serviceId}/gameservers/games/players`, token);
-    return Array.isArray(data.players) ? data.players : [];
+    const players = Array.isArray(data.players) ? data.players : [];
+    playersListCache.set(key, {
+      players,
+      expiresAt: Date.now() + STATUS_CACHE_TTL_MS,
+    });
+    return players;
   } catch {
     return null;
   }
@@ -736,7 +750,7 @@ async function testToken(token) {
 
 /**
  * Query one Nitrado ASE (Microsoft Store / Xbox) service for /pop.
- * Cached 60–120s so /servermanager hub refreshes do not stampede the API.
+ * Cached ~12m so pop, tracker, logs, and /servermanager share one pull.
  */
 async function queryService(server, token, { force = false } = {}) {
   const auth = token || server.token;
@@ -784,6 +798,11 @@ async function queryService(server, token, { force = false } = {}) {
       getGameserver(server.serviceId, auth),
       listPlayers(server.serviceId, auth),
     ]);
+
+    gameserverCache.set(String(server.serviceId), {
+      gameserver,
+      expiresAt: Date.now() + GAMESERVER_CACHE_TTL_MS,
+    });
 
     const online = isOnline(gameserver.status);
     const maxPlayers = Number(gameserver.slots || gameserver.query?.max_players || 0);
@@ -883,10 +902,22 @@ function tokenForServer(server, guild) {
   return resolveToken(guild);
 }
 
-async function queryCluster(servers, guild) {
-  const results = await Promise.all(
-    servers.map((server) => queryService(server, tokenForServer(server, guild)))
-  );
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Query every synced service. Staggers requests so a cluster does not burst
+ * gameservers + games/players in parallel.
+ */
+async function queryCluster(servers, guild, { staggerMs = SERVICE_QUERY_STAGGER_MS } = {}) {
+  const list = servers || [];
+  const results = [];
+  for (let i = 0; i < list.length; i += 1) {
+    if (i > 0 && staggerMs > 0) await sleep(staggerMs);
+    const server = list[i];
+    results.push(await queryService(server, tokenForServer(server, guild)));
+  }
   const online = results.filter((r) => r.online);
   const knownCounts = results.filter(
     (r) => !r.playersUnknown && Number.isFinite(Number(r.players))
@@ -905,6 +936,53 @@ async function queryCluster(servers, guild) {
     totalMaps: results.length,
     playersUnknown: anyUnknown,
   };
+}
+
+/**
+ * One shared cluster status snapshot per guild per interval.
+ * Pop, tracker, and log boards all reuse this instead of each calling query.
+ */
+async function getGuildClusterSnapshot(guild, guildId = null, { force = false } = {}) {
+  const key = String(guildId || guild?.guildId || guild?.id || '_anon');
+  const now = Date.now();
+  const hit = guildClusterSnapshots.get(key);
+
+  if (!force && hit?.cluster && now - hit.at < CLUSTER_SNAPSHOT_TTL_MS) {
+    return { ...hit.cluster, cached: true };
+  }
+  if (!force && hit?.promise) {
+    return hit.promise;
+  }
+
+  // During global 429 cooldown, never start a fresh cluster poll.
+  if (!force && isGuildHeavyPollPaused(guild)) {
+    if (hit?.cluster) {
+      return { ...hit.cluster, cached: true, stale: true, rateLimited: true };
+    }
+    // Fall through to queryCluster — queryService returns cached/stale stubs.
+  }
+
+  const servers = guild?.servers || [];
+  const promise = queryCluster(servers, guild)
+    .then((cluster) => {
+      guildClusterSnapshots.set(key, { at: Date.now(), cluster });
+      return cluster;
+    })
+    .catch((error) => {
+      const prev = guildClusterSnapshots.get(key);
+      if (prev?.promise === promise) {
+        guildClusterSnapshots.delete(key);
+      }
+      throw error;
+    });
+
+  guildClusterSnapshots.set(key, {
+    at: hit?.at || 0,
+    cluster: hit?.cluster,
+    promise,
+  });
+
+  return promise;
 }
 
 async function describeService(serviceId, token) {
@@ -1043,19 +1121,27 @@ async function listFileBookmarks(serviceId, token) {
 }
 
 const LOG_TAIL_BYTES = 160000;
-const MAX_LOG_FILES = 4;
-/** Known-good Logs dir + file paths — skip re-list across 15m board polls. */
-const LOG_PATH_CACHE_TTL_MS = 30 * 60 * 1000;
-/** Successful directory listings. */
-const LIST_CACHE_TTL_MS = 25 * 60 * 1000;
-const LIST_EMPTY_CACHE_TTL_MS = 2 * 60 * 1000;
-const GAMESERVER_CACHE_TTL_MS = 15 * 60 * 1000;
-/** Global token/guild cooldown after any 429 — pauses file_server + heavy polls. */
-const GLOBAL_RATE_LIMIT_MS = 25 * 60 * 1000;
-/** Status query cache — stop /servermanager + pop stampede. */
-const STATUS_CACHE_TTL_MS = 90 * 1000;
-/** Cap list attempts per fetch (cached dir first). */
-const MAX_LIST_ATTEMPTS = 3;
+/** Max 1 log file read per service per cycle (seek/tail only when possible). */
+const MAX_LOG_FILES = 1;
+/** Known-good Logs paths — prefer seek/tail; avoid re-list for 1h. */
+const LOG_PATH_CACHE_TTL_MS = 60 * 60 * 1000;
+/** Directory listings — at most once per hour per service/dir unless path miss. */
+const LIST_CACHE_TTL_MS = 60 * 60 * 1000;
+const LIST_EMPTY_CACHE_TTL_MS = 5 * 60 * 1000;
+const GAMESERVER_CACHE_TTL_MS = 20 * 60 * 1000;
+/** Global token cooldown after any 429 — pauses ALL Nitrado heavy polls. */
+const GLOBAL_RATE_LIMIT_MS = 60 * 60 * 1000;
+/**
+ * Per-service status / players cache. Long enough that pop + tracker + logs
+ * share one gameservers/games/players pull per interval.
+ */
+const STATUS_CACHE_TTL_MS = 12 * 60 * 1000;
+/** Guild-level cluster snapshot shared by pop, tracker, and log boards. */
+const CLUSTER_SNAPSHOT_TTL_MS = 12 * 60 * 1000;
+/** Stagger between services in a cluster query (1–2s). */
+const SERVICE_QUERY_STAGGER_MS = 1500;
+/** Cap list attempts per fetch (path miss only — prefer seek/tail). */
+const MAX_LIST_ATTEMPTS = 1;
 
 /** @type {Map<string, { dir: string, paths: { name: string, path: string }[], username?: string, game?: string, expiresAt: number }>} */
 const logPathCache = new Map();
@@ -1070,6 +1156,10 @@ const globalTokenCooldown = new Map();
 const gameserverCache = new Map();
 /** @type {Map<string, { result: any, expiresAt: number }>} */
 const statusResultCache = new Map();
+/** @type {Map<string, { players: any[]|null, expiresAt: number }>} */
+const playersListCache = new Map();
+/** @type {Map<string, { at: number, cluster?: any, promise?: Promise<any> }>} */
+const guildClusterSnapshots = new Map();
 /** key → last warn timestamp (cooldown window). */
 const logWarnAt = new Map();
 
@@ -1101,10 +1191,12 @@ function markGlobalRateLimited(token) {
   const inWindow = prev && now < prev.until;
   const until = now + GLOBAL_RATE_LIMIT_MS;
   const mins = Math.round(GLOBAL_RATE_LIMIT_MS / 60000);
+  const resumeIso = new Date(until).toISOString();
   globalTokenCooldown.set(key, { until, warned: true });
+  // One clear line when entering cooldown (not on every subsequent 429).
   if (!(inWindow && prev.warned)) {
     console.warn(
-      `Nitrado rate limited — pausing file/API polls for ${mins}m`
+      `Nitrado rate limited — pausing all Nitrado polls until ${resumeIso} (~${mins}m)`
     );
   }
   return GLOBAL_RATE_LIMIT_MS;
@@ -1179,9 +1271,10 @@ function markRateLimited(serviceId, token = null) {
     markGlobalRateLimited(token);
   } else {
     const mins = Math.round(delay / 60000);
+    const resumeIso = new Date(until).toISOString();
     warnLogCooldown(
       `rl:${key}`,
-      `Nitrado rate limited — pausing file/API polls for ${mins}m`,
+      `Nitrado rate limited — pausing all Nitrado polls until ${resumeIso} (~${mins}m)`,
       delay
     );
   }
@@ -1474,37 +1567,36 @@ async function fetchGameLogText(serviceId, token) {
   const game = gameserver.game;
   const pathHit = logPathCache.get(sid);
 
-  // 1) Prefer seek/tail on bookmarked paths — no list.
+  // 1) Prefer seek/tail on bookmarked paths — no list. Max 1 file per cycle.
   if (pathHit && pathHit.expiresAt > Date.now() && pathHit.paths?.length) {
-    for (const p of pathHit.paths) {
-      const label = p.name || entryBaseName(p) || 'log';
-      try {
-        const text = await readLogFileTail(
-          sid,
-          token,
-          { path: p.path, name: label, size: 0 },
-          pathHit.dir
-        );
-        if (text && text.trim()) {
-          chunks.push(text);
-          fetchedNames.push(label);
-        }
-      } catch (error) {
-        if (is429(error)) {
-          markRateLimited(sid, token);
-          return {
-            gameserver,
-            text: chunks.join('\n'),
-            logFiles: fetchedNames,
-            rateLimited: true,
-          };
-        }
-        readFailCount += 1;
-        warnLogCooldown(
-          `${sid}:read:${label}`,
-          `[nitrado] log read failed (locked/404) serviceId=${sid} file=${label}: ${error.message}`
-        );
+    const p = pathHit.paths[0];
+    const label = p.name || entryBaseName(p) || 'log';
+    try {
+      const text = await readLogFileTail(
+        sid,
+        token,
+        { path: p.path, name: label, size: 0 },
+        pathHit.dir
+      );
+      if (text && text.trim()) {
+        chunks.push(text);
+        fetchedNames.push(label);
       }
+    } catch (error) {
+      if (is429(error)) {
+        markRateLimited(sid, token);
+        return {
+          gameserver,
+          text: chunks.join('\n'),
+          logFiles: fetchedNames,
+          rateLimited: true,
+        };
+      }
+      readFailCount += 1;
+      warnLogCooldown(
+        `${sid}:read:${label}`,
+        `[nitrado] log read failed (locked/404) serviceId=${sid} file=${label}: ${error.message}`
+      );
     }
     if (fetchedNames.length) {
       clearRateLimit(sid);
@@ -1512,7 +1604,7 @@ async function fetchGameLogText(serviceId, token) {
       logPathCache.set(sid, pathHit);
       return { gameserver, text: chunks.join('\n'), logFiles: fetchedNames };
     }
-    // Cached paths went stale — fall through to a capped re-list.
+    // Cached paths went stale — fall through to a capped re-list (≤1/hour).
   }
 
   if (isRateLimited(sid, token)) {
@@ -1552,8 +1644,8 @@ async function fetchGameLogText(serviceId, token) {
 
   const seenDirs = new Set();
   let listAttempts = 0;
-  // Fewer attempts when we already know a good dir.
-  const maxLists = pathHit?.dir ? 2 : MAX_LIST_ATTEMPTS;
+  // Path miss only: at most one directory list per fetch (hour-long list cache).
+  const maxLists = MAX_LIST_ATTEMPTS;
 
   for (let i = 0; i < dirs.length; i += 1) {
     if (listAttempts >= maxLists || rateLimited) break;
@@ -1598,20 +1690,20 @@ async function fetchGameLogText(serviceId, token) {
     if (!targets.length) continue;
     sawCandidates = true;
 
-    for (const target of targets) {
-      const label = target.name || entryBaseName(target) || 'log';
-      try {
-        const text = await readLogFileTail(sid, token, target, base);
-        if (text && text.trim()) {
-          chunks.push(text);
-          fetchedNames.push(label);
-        }
-      } catch (error) {
-        if (is429(error)) {
-          markRateLimited(sid, token);
-          rateLimited = true;
-          break;
-        }
+    // Max 1 log file read per service per cycle.
+    const target = targets[0];
+    const label = target.name || entryBaseName(target) || 'log';
+    try {
+      const text = await readLogFileTail(sid, token, target, base);
+      if (text && text.trim()) {
+        chunks.push(text);
+        fetchedNames.push(label);
+      }
+    } catch (error) {
+      if (is429(error)) {
+        markRateLimited(sid, token);
+        rateLimited = true;
+      } else {
         readFailCount += 1;
         warnLogCooldown(
           `${sid}:read:${label}`,
@@ -1622,7 +1714,7 @@ async function fetchGameLogText(serviceId, token) {
 
     if (fetchedNames.length) {
       clearRateLimit(sid);
-      rememberLogPaths(sid, base, targets, username, game);
+      rememberLogPaths(sid, base, targets.slice(0, 1), username, game);
       break;
     }
     if (rateLimited) break;
@@ -2291,7 +2383,9 @@ module.exports = {
   setServerPassword,
   setAdminPassword,
   queryService,
+  getGameserverCached,
   queryCluster,
+  getGuildClusterSnapshot,
   getCachedStatusResult,
   describeService,
   extractMapName,
@@ -2330,4 +2424,5 @@ module.exports = {
   markGlobalRateLimited,
   GLOBAL_RATE_LIMIT_MS,
   STATUS_CACHE_TTL_MS,
+  CLUSTER_SNAPSHOT_TTL_MS,
 };

@@ -1,6 +1,6 @@
 const {
   listPlayers,
-  getGameserver,
+  getGameserverCached,
   tokenForServer,
   extractMapName,
   isGuildHeavyPollPaused,
@@ -16,25 +16,19 @@ const {
 } = require('./playerDb');
 
 /** Cache full cluster online lists to cut Nitrado player-list spam. */
-const ONLINE_CACHE_TTL_MS = 150 * 1000; // 2.5 minutes
+const ONLINE_CACHE_TTL_MS = 8 * 60 * 1000; // 8 minutes (5–10m band)
 /** Minimum gap between starting a new full cluster scan per guild. */
-const SCAN_COOLDOWN_MS = 45 * 1000;
+const SCAN_COOLDOWN_MS = 5 * 60 * 1000;
+/** Stagger between services during a live scan. */
+const SERVICE_STAGGER_MS = 1500;
 
 /** @type {Map<string, { at: number, players: any[], promise?: Promise<any[]> }>} */
 const onlineCache = new Map();
 /** @type {Map<string, number>} */
 const lastScanStartedAt = new Map();
-/** @type {Map<string, number>} */
-const rateLimitWarnAt = new Map();
 
-function warnRateLimitedOnce(guild, windowMs = 10 * 60 * 1000) {
-  const cacheKey = String(guild?.guildId || guild?.id || '_anon');
-  const now = Date.now();
-  const last = rateLimitWarnAt.get(cacheKey) || 0;
-  if (now - last < windowMs) return;
-  rateLimitWarnAt.set(cacheKey, now);
-  const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
-  console.warn(`Nitrado rate limited — pausing file/API polls for ${mins}m`);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isFakeService(serviceId) {
@@ -107,46 +101,46 @@ async function fetchClusterOnlinePlayersUncached(guild) {
     return online;
   }
 
-  await Promise.all(
-    servers.map(async (server) => {
-      const serviceId = String(server.serviceId || '');
-      if (isFakeService(serviceId)) return;
-      const token = tokenForServer(server, guild);
-      if (!token) return;
-      if (isGlobalRateLimited(token)) return;
+  for (let i = 0; i < servers.length; i += 1) {
+    if (i > 0) await sleep(SERVICE_STAGGER_MS);
+    const server = servers[i];
+    const serviceId = String(server.serviceId || '');
+    if (isFakeService(serviceId)) continue;
+    const token = tokenForServer(server, guild);
+    if (!token) continue;
+    if (isGlobalRateLimited(token)) continue;
 
-      let mapName = server.map || server.name || serviceId;
-      try {
-        const gs = await getGameserver(serviceId, token);
-        mapName = extractMapName(gs, mapName);
-      } catch {
-        // keep fallback map name
+    let mapName = server.map || server.name || serviceId;
+    try {
+      const gs = await getGameserverCached(serviceId, token);
+      mapName = extractMapName(gs, mapName);
+    } catch {
+      // keep fallback map name
+    }
+
+    const players = await listPlayers(serviceId, token);
+    if (!Array.isArray(players)) continue;
+
+    for (const raw of players) {
+      const normalized = normalizeOnlinePlayer(raw, {
+        map: mapName,
+        serviceId,
+      });
+      if (
+        !normalized.gamertag &&
+        !normalized.characterName &&
+        !normalized.specimenImplant &&
+        !normalized.nitradoPlayerId
+      ) {
+        continue;
       }
-
-      const players = await listPlayers(serviceId, token);
-      if (!Array.isArray(players)) return;
-
-      for (const raw of players) {
-        const normalized = normalizeOnlinePlayer(raw, {
-          map: mapName,
-          serviceId,
-        });
-        if (
-          !normalized.gamertag &&
-          !normalized.characterName &&
-          !normalized.specimenImplant &&
-          !normalized.nitradoPlayerId
-        ) {
-          continue;
-        }
-        online.push({
-          ...normalized,
-          serverName: server.name || mapName,
-          online: true,
-        });
-      }
-    })
-  );
+      online.push({
+        ...normalized,
+        serverName: server.name || mapName,
+        online: true,
+      });
+    }
+  }
 
   return online;
 }
@@ -169,7 +163,6 @@ async function fetchClusterOnlinePlayers(guild, guildId = null) {
 
   // Rate-limited: never start a full cluster scan — serve stale cache / empty.
   if (isGuildHeavyPollPaused(guild)) {
-    warnRateLimitedOnce(guild);
     return hit?.players || [];
   }
 
@@ -231,9 +224,23 @@ function applyLiveStatus(guildId, profile, live) {
 /**
  * Search DB + live Nitrado lists. Upserts matching online players so stored
  * fields (name, nitrado id, specimen/id2, map, etc.) are current.
+ * During global 429 cooldown, refuses live scan and returns DB-only results.
  */
 async function searchPlayersLive(guildId, guild, query) {
   const q = String(query || '').trim();
+
+  if (isGuildHeavyPollPaused(guild)) {
+    const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
+    return {
+      results: searchPlayers(guildId, q).slice(0, 25),
+      liveCount: 0,
+      liveHits: 0,
+      scanned: false,
+      rateLimited: true,
+      cooldownMinutes: mins,
+    };
+  }
+
   const onlinePlayers = await fetchClusterOnlinePlayers(guild, guildId);
 
   // Upsert live hits for this query (covers brand-new players not yet in DB)
@@ -270,6 +277,7 @@ async function searchPlayersLive(guildId, guild, query) {
     liveCount: onlinePlayers.length,
     liveHits: liveHits.length,
     scanned: true,
+    rateLimited: false,
   };
 }
 
@@ -282,6 +290,10 @@ async function refreshProfileLive(guildId, guild, profileOrId) {
       ? getPlayerById(guildId, profileOrId)
       : profileOrId;
   if (!profile) return null;
+
+  if (isGuildHeavyPollPaused(guild)) {
+    return profile;
+  }
 
   const onlinePlayers = await fetchClusterOnlinePlayers(guild, guildId);
   const live = findLiveMatch(onlinePlayers, profile);

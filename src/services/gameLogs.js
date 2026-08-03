@@ -3,9 +3,9 @@ const {
   fetchGameLogText,
   tokenForServer,
   extractMapName,
-  queryService,
   getCachedStatusResult,
   isGlobalRateLimited,
+  getGuildClusterSnapshot,
 } = require('./nitrado');
 const { enrichPlayersFromChatLogs } = require('./playerDb');
 const { brandEmbed } = require('../utils/embeds');
@@ -14,7 +14,7 @@ const { brand } = require('../config');
 const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
 /** Matches logBoards scheduler — next-update countdown uses this interval. */
-const LOG_BOARD_INTERVAL_MS = 30 * 60 * 1000;
+const LOG_BOARD_INTERVAL_MS = 60 * 60 * 1000;
 /** Reserve room for `Next update: <t:…:R> (<t:…:t>)` (+ optional fence close). */
 const NEXT_UPDATE_SUFFIX_MAX = 72;
 const DESC_MAX = 4096 - NEXT_UPDATE_SUFFIX_MAX;
@@ -243,11 +243,11 @@ function parseLogText(text, mapName, serviceId) {
 }
 
 /** Stagger cluster pulls so Nitrado file_server isn't hit in a burst. */
-const SERVICE_STAGGER_MS = 500;
+const SERVICE_STAGGER_MS = 1500;
 /** Share one pull between admin + chat boards in the same refresh cycle. */
 const COLLECT_CACHE_TTL_MS = 2 * 60 * 1000;
 /** During 429 cooldown, reuse pop cache a bit longer for empty-server skip. */
-const EMPTY_SKIP_STALE_MS = 30 * 60 * 1000;
+const EMPTY_SKIP_STALE_MS = 60 * 60 * 1000;
 /** @type {Map<string, { at: number, result?: any, promise?: Promise<any> }>} */
 const collectCache = new Map();
 /** Last successful parse per service — keep boards alive across 429 cooldowns. */
@@ -261,7 +261,7 @@ function sleep(ms) {
 
 /**
  * Known online count for skipping file_server log pulls.
- * Prefers queryService/pop cache; light status query on cold cache.
+ * Uses shared cluster snapshot / status cache only — no separate queryService.
  * Returns null when unknown (do not skip).
  * @returns {Promise<number|null>}
  */
@@ -272,25 +272,18 @@ async function resolveOnlineCountForLogSkip(server, token) {
     return fresh.online ? Number(fresh.players) : 0;
   }
 
+  const stale = getCachedStatusResult(sid, { maxStaleMs: EMPTY_SKIP_STALE_MS });
+  if (stale && !stale.playersUnknown && Number.isFinite(Number(stale.players))) {
+    return stale.online ? Number(stale.players) : 0;
+  }
+
+  // During cooldown with no usable cache — let fetchGameLogText short-circuit
+  // (keeps last-good boards; avoids a false "0 online" skip).
   if (token && isGlobalRateLimited(token)) {
-    const stale = getCachedStatusResult(sid, { maxStaleMs: EMPTY_SKIP_STALE_MS });
-    if (stale && !stale.playersUnknown && Number.isFinite(Number(stale.players))) {
-      return stale.online ? Number(stale.players) : 0;
-    }
     return null;
   }
 
-  if (!token) return null;
-
-  try {
-    const status = await queryService(server, token);
-    if (status.playersUnknown || status.players == null) return null;
-    if (!status.online) return 0;
-    const n = Number(status.players);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function applyEmptyServerSkip(byMap, server, serviceId) {
@@ -322,6 +315,15 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
   const byMap = {};
   const errors = [];
   const servers = guild.servers || [];
+
+  // Warm shared status snapshot once so pop/tracker/logs share one cluster pull.
+  if (guildId && servers.length && (guild.nitradoAccounts || []).length) {
+    try {
+      await getGuildClusterSnapshot(guild, guildId);
+    } catch {
+      // Continue — empty-skip may fall back to null/unknown.
+    }
+  }
 
   for (let i = 0; i < servers.length; i += 1) {
     const server = servers[i];

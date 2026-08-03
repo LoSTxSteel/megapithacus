@@ -18,7 +18,7 @@ const {
   setServerName,
   setServerPassword,
   setAdminPassword,
-  queryCluster,
+  getGuildClusterSnapshot,
   queryService,
 } = require('../services/nitrado');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
@@ -100,8 +100,9 @@ async function fetchServerStatuses(guild) {
   const map = new Map();
   if (!servers.length) return map;
 
-  const { results } = await queryCluster(servers, guild);
-  for (const result of results) {
+  // Reuse shared guild snapshot when fresh (same pull as pop/tracker/logs).
+  const cluster = await getGuildClusterSnapshot(guild, guild.guildId || guild.id);
+  for (const result of cluster.results || []) {
     map.set(String(result.serviceId), result);
   }
   return map;

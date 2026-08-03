@@ -268,10 +268,14 @@ async function executeSearch(interaction) {
 
   let results;
   let liveCount = 0;
+  let rateLimited = false;
+  let cooldownMinutes = 0;
   try {
     const live = await searchPlayersLive(guildId, guild, query);
     results = live.results;
     liveCount = live.liveCount;
+    rateLimited = Boolean(live.rateLimited);
+    cooldownMinutes = live.cooldownMinutes || 0;
   } catch (error) {
     await interaction.editReply({
       embeds: [
@@ -280,6 +284,60 @@ async function executeSearch(interaction) {
             'Falling back was skipped — fix Nitrado tokens/servers in `/management`.'
         ),
       ],
+    });
+    return;
+  }
+
+  if (rateLimited) {
+    const tip =
+      `Nitrado is rate-limited right now — live online scan paused` +
+      (cooldownMinutes ? ` (~${cooldownMinutes}m left)` : '') +
+      '. Showing stored player DB only. Try again after the cooldown.';
+    if (!results.length) {
+      await interaction.editReply({
+        embeds: [
+          errorEmbed(
+            `No stored players matched \`${query}\`.\n_${tip}_`
+          ),
+        ],
+      });
+      return;
+    }
+    if (results.length === 1) {
+      const payload = profilePayload(results[0], guildId);
+      await interaction.editReply({
+        embeds: payload.embeds,
+        components: payload.components,
+        content: tip,
+      });
+      return;
+    }
+    const list = results
+      .map((p, i) => {
+        const punish = punishmentSummary(guildId, p);
+        const punishBit = punish ? ` · ⚠ ${punish}` : '';
+        const ign =
+          p.characterName &&
+          (!p.gamertag ||
+            p.characterName.toLowerCase() !== p.gamertag.toLowerCase())
+            ? p.characterName
+            : '—';
+        return `**${i + 1}.** ${ign} · \`${p.gamertag || '—'}\` · implant \`${
+          p.specimenImplant || '—'
+        }\` · ${p.tribeName || 'No tribe'}${statusBit(p)}${punishBit}`;
+      })
+      .join('\n');
+    await interaction.editReply({
+      content: tip,
+      embeds: [
+        guildEmbed(getGuild(guildId), `Player search — ${results.length} result(s)`, {
+          accent: true,
+          context: 'Player DB only (Nitrado cooldown)',
+        }).setDescription(
+          `${list.slice(0, 3800)}\n\n_Live scan skipped — Nitrado cooldown._`
+        ),
+      ],
+      components: [resultsPicker(results)],
     });
     return;
   }

@@ -13,17 +13,14 @@ const {
 } = require('./gameLogs');
 const {
   isGuildHeavyPollPaused,
-  getGuildCooldownRemainingMs,
 } = require('./nitrado');
 
-const INTERVAL_MS = 30 * 60 * 1000;
+const INTERVAL_MS = 60 * 60 * 1000;
 let timer = null;
 
 /** Warn once per guild/feature/service about missing threads (avoid interval spam). */
 const missingThreadWarned = new Set();
 const skipConfiguredWarned = new Set();
-/** @type {Map<string, number>} */
-const rateLimitWarnAt = new Map();
 
 function persistThreadMessageId(guildId, featureKey, serviceId, entry, messageId) {
   const guild = getGuild(guildId);
@@ -274,15 +271,8 @@ async function refreshGuildLogBoards(client, guildId) {
     if (discordGuild) {
       // Global token cooldown — skip forum sync + file_server; collect still
       // returns last-good stale parses so Discord embeds stay alive.
+      // (Cooldown console line is emitted once from nitrado.markGlobalRateLimited.)
       if (isGuildHeavyPollPaused(guild)) {
-        const mins = Math.max(1, Math.ceil(getGuildCooldownRemainingMs(guild) / 60000));
-        const last = rateLimitWarnAt.get(guildId) || 0;
-        if (Date.now() - last > 10 * 60 * 1000) {
-          rateLimitWarnAt.set(guildId, Date.now());
-          console.warn(
-            `Nitrado rate limited — pausing file/API polls for ${mins}m`
-          );
-        }
         guildFresh = guild;
       } else {
         guildFresh = await syncMapForums(discordGuild, guildId);
@@ -338,7 +328,7 @@ function startLogBoards(client) {
       console.warn('[logBoards] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('[scheduler] logBoards started (30m)');
+  console.log('[scheduler] logBoards started (60m)');
 }
 
 module.exports = {
