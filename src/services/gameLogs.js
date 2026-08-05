@@ -242,8 +242,8 @@ function parseLogText(text, mapName, serviceId) {
   return { chat, admin };
 }
 
-/** Stagger cluster pulls so Nitrado file_server isn't hit in a burst. */
-const SERVICE_STAGGER_MS = 1500;
+/** Stagger cluster pulls so Nitrado file_server isn't hit in a burst (5–10s). */
+const SERVICE_STAGGER_MS = 8000;
 /** Share one pull between admin + chat boards in the same refresh cycle. */
 const COLLECT_CACHE_TTL_MS = 2 * 60 * 1000;
 /**

@@ -19,8 +19,8 @@ const {
 const ONLINE_CACHE_TTL_MS = 8 * 60 * 1000; // 8 minutes (5–10m band)
 /** Minimum gap between starting a new full cluster scan per guild. */
 const SCAN_COOLDOWN_MS = 5 * 60 * 1000;
-/** Stagger between services during a live scan. */
-const SERVICE_STAGGER_MS = 1500;
+/** Stagger between services during a live scan (5–10s). */
+const SERVICE_STAGGER_MS = 8000;
 
 /** @type {Map<string, { at: number, players: any[], promise?: Promise<any[]> }>} */
 const onlineCache = new Map();

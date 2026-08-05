@@ -32,6 +32,36 @@ function parseJsonPreserveLargeInts(text) {
 }
 
 const NITRADO_TIMEOUT_MS = 25_000;
+/** Minimum gap between any apiRequest starts for the same token (serialize + pace). */
+const MIN_TOKEN_REQUEST_GAP_MS = 2500;
+/** @type {Map<string, Promise<void>>} */
+const tokenRequestChain = new Map();
+/** @type {Map<string, number>} */
+const tokenLastRequestAt = new Map();
+
+/**
+ * Serialize Nitrado HTTP calls per token with a small gap so cluster jobs
+ * do not stampede. Failures never break the queue (no deadlock).
+ */
+function withTokenRequestGate(token, fn) {
+  const key = tokenFingerprint(token) || '_anon';
+  const prior = tokenRequestChain.get(key) || Promise.resolve();
+  const run = prior.catch(() => undefined).then(async () => {
+    const last = tokenLastRequestAt.get(key) || 0;
+    const wait = Math.max(0, MIN_TOKEN_REQUEST_GAP_MS - (Date.now() - last));
+    if (wait > 0) await sleep(wait);
+    tokenLastRequestAt.set(key, Date.now());
+    return fn();
+  });
+  tokenRequestChain.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return run;
+}
 
 async function apiRequest(method, path, token, formFields = null, { jsonBody = null } = {}) {
   if (!token) {
@@ -41,87 +71,89 @@ async function apiRequest(method, path, token, formFields = null, { jsonBody = n
     );
   }
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/json',
-  };
+  return withTokenRequestGate(token, async () => {
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    };
 
-  const options = { method, headers };
+    const options = { method, headers };
 
-  if (jsonBody && typeof jsonBody === 'object') {
-    // Some community Nitrado clients (Flutter/Java) POST JSON for player kick.
-    headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(jsonBody);
-  } else if (formFields && Object.keys(formFields).length) {
-    // Official NitrAPI-PHP uses Guzzle form_params (x-www-form-urlencoded).
-    headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    options.body = new URLSearchParams(formFields).toString();
-  }
+    if (jsonBody && typeof jsonBody === 'object') {
+      // Some community Nitrado clients (Flutter/Java) POST JSON for player kick.
+      headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(jsonBody);
+    } else if (formFields && Object.keys(formFields).length) {
+      // Official NitrAPI-PHP uses Guzzle form_params (x-www-form-urlencoded).
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      options.body = new URLSearchParams(formFields).toString();
+    }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), NITRADO_TIMEOUT_MS);
-  options.signal = controller.signal;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), NITRADO_TIMEOUT_MS);
+    options.signal = controller.signal;
 
-  let res;
-  try {
-    res = await fetch(`${BASE}${path}`, options);
-  } catch (error) {
-    if (error?.name === 'AbortError') {
+    let res;
+    try {
+      res = await fetch(`${BASE}${path}`, options);
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new NitradoError(
+          `Nitrado request timed out after ${NITRADO_TIMEOUT_MS}ms (${method} ${path})`,
+          408
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let body;
+    try {
+      const text = await res.text();
+      body = text ? parseJsonPreserveLargeInts(text) : null;
+    } catch {
+      body = null;
+    }
+
+    // Nitrado often returns HTTP 200 with JSON { status: "error", message }.
+    // Official PHP SDK throws on status===error even when HTTP is 200.
+    if (body && typeof body === 'object' && body.status === 'error') {
+      const apiMsg = body.message || body?.data?.message || 'Unknown Nitrado error';
+      if (res.status === 429 || /\b429\b|rate.?limit/i.test(String(apiMsg))) {
+        markTokenCooldown(token, classifyApiPath(path));
+      }
       throw new NitradoError(
-        `Nitrado request timed out after ${NITRADO_TIMEOUT_MS}ms (${method} ${path})`,
-        408
+        `${apiMsg} (${res.status} ${method} ${path})`,
+        res.status || 400
       );
     }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
 
-  let body;
-  try {
-    const text = await res.text();
-    body = text ? parseJsonPreserveLargeInts(text) : null;
-  } catch {
-    body = null;
-  }
-
-  // Nitrado often returns HTTP 200 with JSON { status: "error", message }.
-  // Official PHP SDK throws on status===error even when HTTP is 200.
-  if (body && typeof body === 'object' && body.status === 'error') {
-    const apiMsg = body.message || body?.data?.message || 'Unknown Nitrado error';
-    if (res.status === 429 || /\b429\b|rate.?limit/i.test(String(apiMsg))) {
-      markTokenCooldown(token, classifyApiPath(path));
+    if (!res.ok) {
+      const apiMsg = body?.message || body?.data?.message;
+      const msg = apiMsg
+        ? `${apiMsg} (${res.status} ${method} ${path})`
+        : `Nitrado API ${res.status} ${method} ${path}`;
+      if (res.status === 429) {
+        markTokenCooldown(token, classifyApiPath(path));
+      }
+      throw new NitradoError(msg, res.status);
     }
-    throw new NitradoError(
-      `${apiMsg} (${res.status} ${method} ${path})`,
-      res.status || 400
-    );
-  }
 
-  if (!res.ok) {
-    const apiMsg = body?.message || body?.data?.message;
-    const msg = apiMsg
-      ? `${apiMsg} (${res.status} ${method} ${path})`
-      : `Nitrado API ${res.status} ${method} ${path}`;
-    if (res.status === 429) {
-      markTokenCooldown(token, classifyApiPath(path));
+    if (
+      body &&
+      typeof body === 'object' &&
+      body.status != null &&
+      body.status !== 'success'
+    ) {
+      throw new NitradoError(
+        `Unexpected Nitrado status "${body.status}" (${method} ${path})`,
+        res.status || 400
+      );
     }
-    throw new NitradoError(msg, res.status);
-  }
 
-  if (
-    body &&
-    typeof body === 'object' &&
-    body.status != null &&
-    body.status !== 'success'
-  ) {
-    throw new NitradoError(
-      `Unexpected Nitrado status "${body.status}" (${method} ${path})`,
-      res.status || 400
-    );
-  }
-
-  return body?.data ?? body;
+    return body?.data ?? body;
+  });
 }
 
 async function apiGet(path, token) {
@@ -1151,8 +1183,8 @@ const GLOBAL_RATE_LIMIT_MS = FILE_SERVER_RATE_LIMIT_MS;
 const STATUS_CACHE_TTL_MS = 12 * 60 * 1000;
 /** Guild-level cluster snapshot shared by pop, tracker, and log boards. */
 const CLUSTER_SNAPSHOT_TTL_MS = 12 * 60 * 1000;
-/** Stagger between services in a cluster query (1–2s). */
-const SERVICE_QUERY_STAGGER_MS = 1500;
+/** Stagger between services in a cluster query (5–10s) — prefer over longer polls. */
+const SERVICE_QUERY_STAGGER_MS = 8000;
 /** Cap list attempts per fetch (path miss only — prefer seek/tail). */
 const MAX_LIST_ATTEMPTS = 1;
 
@@ -2542,4 +2574,6 @@ module.exports = {
   OTHER_RATE_LIMIT_MS,
   STATUS_CACHE_TTL_MS,
   CLUSTER_SNAPSHOT_TTL_MS,
+  SERVICE_QUERY_STAGGER_MS,
+  MIN_TOKEN_REQUEST_GAP_MS,
 };

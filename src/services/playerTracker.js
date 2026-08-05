@@ -22,8 +22,8 @@ const {
 
 /** Join/leave poll — games/players is lighter than file_server; keep responsive. */
 const INTERVAL_MS = 4 * 60 * 1000;
-/** Stagger between servers so games/players is not burst. */
-const SERVICE_STAGGER_MS = 1500;
+/** Stagger between servers so games/players is not burst (5–10s). */
+const SERVICE_STAGGER_MS = 8000;
 let timer = null;
 
 // serviceId -> Set of profile keys last seen online
