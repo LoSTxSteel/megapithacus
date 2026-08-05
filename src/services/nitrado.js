@@ -90,7 +90,7 @@ async function apiRequest(method, path, token, formFields = null, { jsonBody = n
   if (body && typeof body === 'object' && body.status === 'error') {
     const apiMsg = body.message || body?.data?.message || 'Unknown Nitrado error';
     if (res.status === 429 || /\b429\b|rate.?limit/i.test(String(apiMsg))) {
-      markGlobalRateLimited(token);
+      markTokenCooldown(token, classifyApiPath(path));
     }
     throw new NitradoError(
       `${apiMsg} (${res.status} ${method} ${path})`,
@@ -104,7 +104,7 @@ async function apiRequest(method, path, token, formFields = null, { jsonBody = n
       ? `${apiMsg} (${res.status} ${method} ${path})`
       : `Nitrado API ${res.status} ${method} ${path}`;
     if (res.status === 429) {
-      markGlobalRateLimited(token);
+      markTokenCooldown(token, classifyApiPath(path));
     }
     throw new NitradoError(msg, res.status);
   }
@@ -161,7 +161,8 @@ async function listPlayers(serviceId, token, { force = false } = {}) {
     const hit = playersListCache.get(key);
     if (hit && hit.expiresAt > Date.now()) return hit.players;
   }
-  if (token && isGlobalRateLimited(token)) {
+  // Only games/players cooldown blocks this — file_server 429 must not.
+  if (token && isPlayersRateLimited(token)) {
     const hit = playersListCache.get(key);
     return hit?.players ?? null;
   }
@@ -762,7 +763,8 @@ async function queryService(server, token, { force = false } = {}) {
     }
   }
 
-  if (auth && isGlobalRateLimited(auth)) {
+  // games/players + gameservers pause — file_server 429 must not block pop.
+  if (auth && isPlayersRateLimited(auth)) {
     const hit = statusResultCache.get(cacheKey);
     if (hit?.result) {
       // Do not present a stale cached pop as current online count.
@@ -856,12 +858,13 @@ async function queryService(server, token, { force = false } = {}) {
     };
     statusResultCache.set(cacheKey, {
       result,
+      at: Date.now(),
       expiresAt: Date.now() + STATUS_CACHE_TTL_MS,
     });
     return result;
   } catch (error) {
     if (is429(error)) {
-      markRateLimited(server.serviceId, auth);
+      markRateLimited(server.serviceId, auth, 'players');
       const hit = statusResultCache.get(cacheKey);
       if (hit?.result) {
         return {
@@ -954,8 +957,9 @@ async function getGuildClusterSnapshot(guild, guildId = null, { force = false } 
     return hit.promise;
   }
 
-  // During global 429 cooldown, never start a fresh cluster poll.
-  if (!force && isGuildHeavyPollPaused(guild)) {
+  // During games/players 429 cooldown, never start a fresh cluster poll.
+  // file_server cooldown must not block pop/tracker snapshots.
+  if (!force && isGuildPlayersPollPaused(guild)) {
     if (hit?.cluster) {
       return { ...hit.cluster, cached: true, stale: true, rateLimited: true };
     }
@@ -1129,8 +1133,17 @@ const LOG_PATH_CACHE_TTL_MS = 60 * 60 * 1000;
 const LIST_CACHE_TTL_MS = 60 * 60 * 1000;
 const LIST_EMPTY_CACHE_TTL_MS = 5 * 60 * 1000;
 const GAMESERVER_CACHE_TTL_MS = 20 * 60 * 1000;
-/** Global token cooldown after any 429 — pauses ALL Nitrado heavy polls. */
-const GLOBAL_RATE_LIMIT_MS = 60 * 60 * 1000;
+/** file_server 429 — pause log seeks/lists only (~40m). */
+const FILE_SERVER_RATE_LIMIT_MS = 40 * 60 * 1000;
+/** games/players (+ gameservers) 429 — brief pause for tracker/pop (~12m). */
+const PLAYERS_RATE_LIMIT_MS = 12 * 60 * 1000;
+/** Other endpoint 429 — short pause; does not freeze everything for 60m. */
+const OTHER_RATE_LIMIT_MS = 15 * 60 * 1000;
+/**
+ * @deprecated Prefer FILE_SERVER_RATE_LIMIT_MS / PLAYERS_RATE_LIMIT_MS.
+ * Kept as alias for the longer (file) pause so older imports stay sane.
+ */
+const GLOBAL_RATE_LIMIT_MS = FILE_SERVER_RATE_LIMIT_MS;
 /**
  * Per-service status / players cache. Long enough that pop + tracker + logs
  * share one gameservers/games/players pull per interval.
@@ -1147,14 +1160,20 @@ const MAX_LIST_ATTEMPTS = 1;
 const logPathCache = new Map();
 /** @type {Map<string, { entries: any[], expiresAt: number }>} */
 const listCache = new Map();
-/** @type {Map<string, { until: number, failures: number, warned: boolean }>} */
+/** @type {Map<string, { until: number, failures: number, warned: boolean, kind?: string }>} */
 const rateLimitState = new Map();
-/** token fingerprint → global cooldown (shared across all services on that token). */
+/** token fingerprint → file_server cooldown */
 /** @type {Map<string, { until: number, warned: boolean }>} */
-const globalTokenCooldown = new Map();
+const fileServerCooldown = new Map();
+/** token fingerprint → games/players cooldown */
+/** @type {Map<string, { until: number, warned: boolean }>} */
+const playersCooldown = new Map();
+/** token fingerprint → other/generic cooldown */
+/** @type {Map<string, { until: number, warned: boolean }>} */
+const otherCooldown = new Map();
 /** @type {Map<string, { gameserver: any, expiresAt: number }>} */
 const gameserverCache = new Map();
-/** @type {Map<string, { result: any, expiresAt: number }>} */
+/** @type {Map<string, { result: any, at: number, expiresAt: number }>} */
 const statusResultCache = new Map();
 /** @type {Map<string, { players: any[]|null, expiresAt: number }>} */
 const playersListCache = new Map();
@@ -1183,44 +1202,108 @@ function tokenFingerprint(token) {
   return `tk:${t.slice(-20)}`;
 }
 
-function markGlobalRateLimited(token) {
-  const key = tokenFingerprint(token);
-  if (!key) return GLOBAL_RATE_LIMIT_MS;
-  const now = Date.now();
-  const prev = globalTokenCooldown.get(key);
-  const inWindow = prev && now < prev.until;
-  const until = now + GLOBAL_RATE_LIMIT_MS;
-  const mins = Math.round(GLOBAL_RATE_LIMIT_MS / 60000);
-  const resumeIso = new Date(until).toISOString();
-  globalTokenCooldown.set(key, { until, warned: true });
-  // One clear line when entering cooldown (not on every subsequent 429).
-  if (!(inWindow && prev.warned)) {
-    console.warn(
-      `Nitrado rate limited — pausing all Nitrado polls until ${resumeIso} (~${mins}m)`
-    );
+/** Classify Nitrado path so a file_server 429 does not freeze games/players. */
+function classifyApiPath(path) {
+  const p = String(path || '');
+  if (/file_server/i.test(p)) return 'file';
+  if (/games\/players/i.test(p)) return 'players';
+  if (/\/gameservers(?:\/|$|\?)/i.test(p) || /\/gameservers$/i.test(p)) {
+    return 'players';
   }
-  return GLOBAL_RATE_LIMIT_MS;
+  return 'other';
 }
 
-function isGlobalRateLimited(token) {
+function cooldownMapForKind(kind) {
+  if (kind === 'file') return fileServerCooldown;
+  if (kind === 'players') return playersCooldown;
+  return otherCooldown;
+}
+
+function cooldownMsForKind(kind) {
+  if (kind === 'file') return FILE_SERVER_RATE_LIMIT_MS;
+  if (kind === 'players') return PLAYERS_RATE_LIMIT_MS;
+  return OTHER_RATE_LIMIT_MS;
+}
+
+function cooldownLabel(kind) {
+  if (kind === 'file') return 'file_server log pulls';
+  if (kind === 'players') return 'games/players + pop/tracker';
+  return 'other Nitrado calls';
+}
+
+/**
+ * Mark a token cooldown for one API family only.
+ * @param {string} token
+ * @param {'file'|'players'|'other'} [kind]
+ */
+function markTokenCooldown(token, kind = 'other') {
+  const key = tokenFingerprint(token);
+  const delay = cooldownMsForKind(kind);
+  if (!key) return delay;
+  const map = cooldownMapForKind(kind);
+  const now = Date.now();
+  const prev = map.get(key);
+  const inWindow = prev && now < prev.until;
+  const until = now + delay;
+  const mins = Math.round(delay / 60000);
+  const resumeIso = new Date(until).toISOString();
+  map.set(key, { until, warned: true });
+  if (!(inWindow && prev.warned)) {
+    console.warn(
+      `Nitrado rate limited (${kind}) — pausing ${cooldownLabel(kind)} until ${resumeIso} (~${mins}m)`
+    );
+  }
+  return delay;
+}
+
+/** @deprecated Use markTokenCooldown(token, kind). Defaults to file (safest for legacy). */
+function markGlobalRateLimited(token) {
+  return markTokenCooldown(token, 'file');
+}
+
+function isCooldownActive(map, token) {
   const key = tokenFingerprint(token);
   if (!key) return false;
-  const st = globalTokenCooldown.get(key);
+  const st = map.get(key);
   return Boolean(st && Date.now() < st.until);
 }
 
-function getGlobalCooldownRemainingMs(token) {
+function cooldownRemainingMs(map, token) {
   const key = tokenFingerprint(token);
   if (!key) return 0;
-  const st = globalTokenCooldown.get(key);
+  const st = map.get(key);
   if (!st) return 0;
   return Math.max(0, st.until - Date.now());
 }
 
-/** True if any Nitrado token on this guild is in the global 429 cooldown. */
-function isGuildHeavyPollPaused(guild) {
-  if (!guild) return false;
+function isFileServerRateLimited(token) {
+  return isCooldownActive(fileServerCooldown, token);
+}
+
+function isPlayersRateLimited(token) {
+  return isCooldownActive(playersCooldown, token);
+}
+
+/** True if any token cooldown is active (file, players, or other). */
+function isGlobalRateLimited(token) {
+  return (
+    isFileServerRateLimited(token) ||
+    isPlayersRateLimited(token) ||
+    isCooldownActive(otherCooldown, token)
+  );
+}
+
+function getGlobalCooldownRemainingMs(token) {
+  return Math.max(
+    cooldownRemainingMs(fileServerCooldown, token),
+    cooldownRemainingMs(playersCooldown, token),
+    cooldownRemainingMs(otherCooldown, token)
+  );
+}
+
+function guildTokens(guild) {
   const tokens = new Set();
+  if (!guild) return tokens;
   for (const account of guild.nitradoAccounts || []) {
     if (account?.token) tokens.add(account.token);
   }
@@ -1228,53 +1311,71 @@ function isGuildHeavyPollPaused(guild) {
   for (const server of guild.servers || []) {
     if (server?.token) tokens.add(server.token);
   }
-  for (const token of tokens) {
-    if (isGlobalRateLimited(token)) return true;
+  return tokens;
+}
+
+/** True if any guild token is in file_server 429 cooldown. */
+function isGuildFilePollPaused(guild) {
+  for (const token of guildTokens(guild)) {
+    if (isFileServerRateLimited(token)) return true;
   }
   return false;
 }
 
+/** True if any guild token is in games/players 429 cooldown. */
+function isGuildPlayersPollPaused(guild) {
+  for (const token of guildTokens(guild)) {
+    if (isPlayersRateLimited(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * Heavy poll pause for pop/tracker/live-search (games/players family).
+ * file_server 429 alone does NOT pause these.
+ */
+function isGuildHeavyPollPaused(guild) {
+  return isGuildPlayersPollPaused(guild);
+}
+
 function getGuildCooldownRemainingMs(guild) {
-  if (!guild) return 0;
   let max = 0;
-  const tokens = new Set();
-  for (const account of guild.nitradoAccounts || []) {
-    if (account?.token) tokens.add(account.token);
-  }
-  if (guild.nitradoToken) tokens.add(guild.nitradoToken);
-  for (const server of guild.servers || []) {
-    if (server?.token) tokens.add(server.token);
-  }
-  for (const token of tokens) {
+  for (const token of guildTokens(guild)) {
     max = Math.max(max, getGlobalCooldownRemainingMs(token));
   }
   return max;
 }
 
+/**
+ * Per-service + file_server token pause (log seeks, save list, etc.).
+ * Does not treat games/players cooldown as a file pause.
+ */
 function isRateLimited(serviceId, token = null) {
-  if (token && isGlobalRateLimited(token)) return true;
+  if (token && isFileServerRateLimited(token)) return true;
   const st = rateLimitState.get(String(serviceId));
   return Boolean(st && Date.now() < st.until);
 }
 
 /**
- * Mark a service (+ optional token globally) rate-limited for GLOBAL_RATE_LIMIT_MS.
- * Any 429 should pause file_server and heavy cluster polls for the whole token.
+ * Mark a service (+ optional token by kind) rate-limited.
+ * @param {string} serviceId
+ * @param {string|null} [token]
+ * @param {'file'|'players'|'other'} [kind]
  */
-function markRateLimited(serviceId, token = null) {
+function markRateLimited(serviceId, token = null, kind = 'file') {
   const key = String(serviceId);
   const now = Date.now();
-  const delay = GLOBAL_RATE_LIMIT_MS;
+  const delay = cooldownMsForKind(kind);
   const until = now + delay;
-  rateLimitState.set(key, { until, failures: 1, warned: true });
+  rateLimitState.set(key, { until, failures: 1, warned: true, kind });
   if (token) {
-    markGlobalRateLimited(token);
+    markTokenCooldown(token, kind);
   } else {
     const mins = Math.round(delay / 60000);
     const resumeIso = new Date(until).toISOString();
     warnLogCooldown(
-      `rl:${key}`,
-      `Nitrado rate limited — pausing all Nitrado polls until ${resumeIso} (~${mins}m)`,
+      `rl:${key}:${kind}`,
+      `Nitrado rate limited (${kind}) — pausing ${cooldownLabel(kind)} until ${resumeIso} (~${mins}m)`,
       delay
     );
   }
@@ -1282,7 +1383,7 @@ function markRateLimited(serviceId, token = null) {
 }
 
 function clearRateLimit(serviceId) {
-  // Clear per-service only — global token cooldown must expire on its own
+  // Clear per-service only — token cooldowns must expire on their own
   // so a single success does not re-stampede the rest of the cluster.
   rateLimitState.delete(String(serviceId));
 }
@@ -1296,18 +1397,25 @@ function getCachedGameserver(serviceId) {
 /**
  * Peek cached queryService/pop status without network.
  * @param {string} serviceId
- * @param {{ maxStaleMs?: number }} [opts] allow expired entries within this window
+ * @param {{ maxStaleMs?: number, maxAgeMs?: number|null }} [opts]
+ *   maxStaleMs — allow expired entries within this window after expiresAt
+ *   maxAgeMs — require cache `at` age ≤ this (freshness for empty-server skip)
  * @returns {object|null}
  */
-function getCachedStatusResult(serviceId, { maxStaleMs = 0 } = {}) {
+function getCachedStatusResult(serviceId, { maxStaleMs = 0, maxAgeMs = null } = {}) {
   const hit = statusResultCache.get(String(serviceId));
   if (!hit?.result) return null;
   const now = Date.now();
+  const fetchedAt = hit.at || hit.expiresAt - STATUS_CACHE_TTL_MS;
+  const ageMs = Math.max(0, now - fetchedAt);
+  if (maxAgeMs != null && ageMs > maxAgeMs) {
+    return null;
+  }
   if (hit.expiresAt > now) {
-    return { ...hit.result, cached: true };
+    return { ...hit.result, cached: true, cacheAgeMs: ageMs };
   }
   if (maxStaleMs > 0 && now - hit.expiresAt <= maxStaleMs) {
-    return { ...hit.result, cached: true, stale: true };
+    return { ...hit.result, cached: true, stale: true, cacheAgeMs: ageMs };
   }
   return null;
 }
@@ -2417,12 +2525,21 @@ module.exports = {
   is429,
   isRateLimited,
   isGlobalRateLimited,
+  isFileServerRateLimited,
+  isPlayersRateLimited,
   isGuildHeavyPollPaused,
+  isGuildFilePollPaused,
+  isGuildPlayersPollPaused,
   getGuildCooldownRemainingMs,
   getGlobalCooldownRemainingMs,
   markRateLimited,
   markGlobalRateLimited,
+  markTokenCooldown,
+  classifyApiPath,
   GLOBAL_RATE_LIMIT_MS,
+  FILE_SERVER_RATE_LIMIT_MS,
+  PLAYERS_RATE_LIMIT_MS,
+  OTHER_RATE_LIMIT_MS,
   STATUS_CACHE_TTL_MS,
   CLUSTER_SNAPSHOT_TTL_MS,
 };

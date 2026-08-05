@@ -20,7 +20,8 @@ const {
   isGamerscoreChecked,
 } = require('./gamerscoreDetection');
 
-const INTERVAL_MS = 15 * 60 * 1000;
+/** Join/leave poll — games/players is lighter than file_server; keep responsive. */
+const INTERVAL_MS = 4 * 60 * 1000;
 /** Stagger between servers so games/players is not burst. */
 const SERVICE_STAGGER_MS = 1500;
 let timer = null;
@@ -69,6 +70,8 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
   const prevKey = `${guildId}:${serviceId}`;
   const isBootstrap = !previousOnline.has(prevKey);
   const prev = previousOnline.get(prevKey) || new Set();
+  let joinCount = 0;
+  let leaveCount = 0;
 
   for (const raw of players) {
     const normalized = normalizeOnlinePlayer(raw, {
@@ -99,6 +102,7 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
         console.warn(`[playerTracker] join log failed: ${err.message}`);
         return { ok: false, reason: 'error' };
       });
+      if (posted?.ok) joinCount += 1;
       if (posted && !posted.ok && posted.reason === 'no_thread') {
         warnSkipOnce(
           guildId,
@@ -137,16 +141,24 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
   const left = markOfflineExcept(guildId, onlineKeys, serviceId);
   if (!isBootstrap && discordGuild && wantsJoinLeave) {
     for (const profile of left) {
-      await postJoinLeave(discordGuild, guildId, serviceId, {
+      const posted = await postJoinLeave(discordGuild, guildId, serviceId, {
         type: 'leave',
         profile,
         mapName: profile.map || mapName,
         serverName: server.name,
-      }).catch((err) => console.warn(`[playerTracker] leave log failed: ${err.message}`));
+      }).catch((err) => {
+        console.warn(`[playerTracker] leave log failed: ${err.message}`);
+        return { ok: false };
+      });
+      if (posted?.ok) leaveCount += 1;
     }
   }
 
   previousOnline.set(prevKey, onlineKeys);
+  console.log(
+    `[playerTracker] scan serviceId=${serviceId} online=${onlineKeys.size}` +
+      ` bootstrap=${isBootstrap} joinsPosted=${joinCount} leavesPosted=${leaveCount}`
+  );
 }
 
 async function scanGuild(client, guildId) {
@@ -155,8 +167,14 @@ async function scanGuild(client, guildId) {
     return;
   }
 
+  // Only games/players cooldown pauses tracker — file_server 429 must not.
   if (isGuildHeavyPollPaused(guild)) {
-    skipWarned.add(`${guildId}:rate_limited`);
+    if (!skipWarned.has(`${guildId}:rate_limited`)) {
+      skipWarned.add(`${guildId}:rate_limited`);
+      console.warn(
+        `[playerTracker] games/players cooldown guild=${guildId} — skipping scan`
+      );
+    }
     return;
   }
   skipWarned.delete(`${guildId}:rate_limited`);
@@ -253,7 +271,9 @@ function startPlayerTracker(client) {
     );
   }, INTERVAL_MS);
 
-  console.log('[scheduler] playerTracker started (15m)');
+  console.log(
+    `[scheduler] playerTracker started (${Math.round(INTERVAL_MS / 60000)}m)`
+  );
 }
 
 module.exports = {

@@ -4,7 +4,7 @@ const {
   tokenForServer,
   extractMapName,
   getCachedStatusResult,
-  isGlobalRateLimited,
+  isFileServerRateLimited,
   getGuildClusterSnapshot,
 } = require('./nitrado');
 const { enrichPlayersFromChatLogs } = require('./playerDb');
@@ -14,7 +14,7 @@ const { brand } = require('../config');
 const ADMIN_LOG_COLOR = 0x9b59b6;
 const ADMIN_GROUP_WINDOW_MS = 60_000;
 /** Matches logBoards scheduler — next-update countdown uses this interval. */
-const LOG_BOARD_INTERVAL_MS = 60 * 60 * 1000;
+const LOG_BOARD_INTERVAL_MS = 12 * 60 * 1000;
 /** Reserve room for `Next update: <t:…:R> (<t:…:t>)` (+ optional fence close). */
 const NEXT_UPDATE_SUFFIX_MAX = 72;
 const DESC_MAX = 4096 - NEXT_UPDATE_SUFFIX_MAX;
@@ -246,14 +246,21 @@ function parseLogText(text, mapName, serviceId) {
 const SERVICE_STAGGER_MS = 1500;
 /** Share one pull between admin + chat boards in the same refresh cycle. */
 const COLLECT_CACHE_TTL_MS = 2 * 60 * 1000;
-/** During 429 cooldown, reuse pop cache a bit longer for empty-server skip. */
-const EMPTY_SKIP_STALE_MS = 60 * 60 * 1000;
+/**
+ * Only skip file_server log pulls when pop is a *fresh* confirmed 0 online.
+ * Stale / unknown / rate-limited → still try (never skip forever on bad cache).
+ */
+const EMPTY_SKIP_MAX_AGE_MS = 8 * 60 * 1000;
 /** @type {Map<string, { at: number, result?: any, promise?: Promise<any> }>} */
 const collectCache = new Map();
 /** Last successful parse per service — keep boards alive across 429 cooldowns. */
 const lastGoodByService = new Map();
+/** serviceId → ISO of last successful log fetch (even if 0 chat/admin lines). */
+const lastSuccessfulFetchAt = new Map();
 /** Log empty-server skip once until players return. */
 const emptySkipLogged = new Set();
+/** Odd streaks skip; even streaks still try (never skip every cycle forever). */
+const emptySkipStreak = new Map();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -262,34 +269,43 @@ function sleep(ms) {
 /**
  * Known online count for skipping file_server log pulls.
  * Uses shared cluster snapshot / status cache only — no separate queryService.
- * Returns null when unknown (do not skip).
- * @returns {Promise<number|null>}
+ * Returns null when unknown/stale/rate-limited (do not skip).
+ * @returns {Promise<{ count: number|null, ageMs: number|null, reason: string }>}
  */
 async function resolveOnlineCountForLogSkip(server, token) {
   const sid = String(server.serviceId);
-  const fresh = getCachedStatusResult(sid);
-  if (fresh && !fresh.playersUnknown && Number.isFinite(Number(fresh.players))) {
-    return fresh.online ? Number(fresh.players) : 0;
+
+  // Fresh confirmed count only (< ~8m). Never trust hour-old 0-pop cache.
+  const fresh = getCachedStatusResult(sid, { maxAgeMs: EMPTY_SKIP_MAX_AGE_MS });
+  if (
+    fresh &&
+    !fresh.playersUnknown &&
+    !fresh.rateLimited &&
+    Number.isFinite(Number(fresh.players))
+  ) {
+    const count = fresh.online ? Number(fresh.players) : 0;
+    return {
+      count,
+      ageMs: fresh.cacheAgeMs ?? null,
+      reason: count === 0 ? 'fresh_zero' : 'fresh_online',
+    };
   }
 
-  const stale = getCachedStatusResult(sid, { maxStaleMs: EMPTY_SKIP_STALE_MS });
-  if (stale && !stale.playersUnknown && Number.isFinite(Number(stale.players))) {
-    return stale.online ? Number(stale.players) : 0;
+  // file_server cooldown — fetchGameLogText will short-circuit; do not fake 0.
+  if (token && isFileServerRateLimited(token)) {
+    return { count: null, ageMs: null, reason: 'file_cooldown' };
   }
 
-  // During cooldown with no usable cache — let fetchGameLogText short-circuit
-  // (keeps last-good boards; avoids a false "0 online" skip).
-  if (token && isGlobalRateLimited(token)) {
-    return null;
-  }
-
-  return null;
+  return { count: null, ageMs: null, reason: 'unknown_or_stale' };
 }
 
-function applyEmptyServerSkip(byMap, server, serviceId) {
+function applyEmptyServerSkip(byMap, server, serviceId, detail = '') {
+  const agePart = detail ? ` ${detail}` : '';
   if (!emptySkipLogged.has(serviceId)) {
     emptySkipLogged.add(serviceId);
-    console.log(`[logBoards] skip logs serviceId=${serviceId} (0 online)`);
+    console.log(
+      `[gameLogs] skip logs serviceId=${serviceId} reason=fresh_zero_online${agePart}`
+    );
   }
 
   const prev = lastGoodByService.get(serviceId);
@@ -339,16 +355,43 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
         error: 'No Nitrado token',
       };
       errors.push(`${server.name}: no token`);
+      console.log(
+        `[gameLogs] skip serviceId=${serviceId} reason=no_token lastOk=${
+          lastSuccessfulFetchAt.get(serviceId) || 'never'
+        }`
+      );
       continue;
     }
 
-    const onlineCount = await resolveOnlineCountForLogSkip(server, token);
+    const online = await resolveOnlineCountForLogSkip(server, token);
+    const onlineCount = online.count;
+
     if (onlineCount === 0) {
-      applyEmptyServerSkip(byMap, server, serviceId);
-      continue;
-    }
-    if (onlineCount != null && onlineCount > 0) {
+      const streak = (emptySkipStreak.get(serviceId) || 0) + 1;
+      emptySkipStreak.set(serviceId, streak);
+      // Skip odd cycles; force-try every other so a stuck 0 cache cannot freeze forever.
+      if (streak % 2 === 1) {
+        const ageMin =
+          online.ageMs != null ? `age=${Math.round(online.ageMs / 60000)}m` : '';
+        applyEmptyServerSkip(byMap, server, serviceId, ageMin);
+        continue;
+      }
+      console.log(
+        `[gameLogs] retry despite 0 online serviceId=${serviceId} (every-other cycle) lastOk=${
+          lastSuccessfulFetchAt.get(serviceId) || 'never'
+        }`
+      );
+    } else {
+      emptySkipStreak.delete(serviceId);
       emptySkipLogged.delete(serviceId);
+    }
+
+    if (onlineCount == null) {
+      console.log(
+        `[gameLogs] fetch serviceId=${serviceId} online=unknown reason=${online.reason} lastOk=${
+          lastSuccessfulFetchAt.get(serviceId) || 'never'
+        }`
+      );
     }
 
     try {
@@ -356,6 +399,11 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
         await fetchGameLogText(serviceId, token);
 
       if (rateLimited || skipped === 'rate_limited') {
+        console.log(
+          `[gameLogs] rate_limited serviceId=${serviceId} lastOk=${
+            lastSuccessfulFetchAt.get(serviceId) || 'never'
+          }`
+        );
         const prev = lastGoodByService.get(serviceId);
         if (prev) {
           byMap[serviceId] = {
@@ -379,16 +427,26 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
       const mapName =
         extractMapName(gameserver, server.name) || server.name || serviceId;
       const parsed = parseLogText(text, mapName, serviceId);
+      const fetchedAt = new Date().toISOString();
+      lastSuccessfulFetchAt.set(serviceId, fetchedAt);
       const entry = {
         name: mapName,
         chat: parsed.chat.slice(-40),
         admin: parsed.admin.slice(-40),
         logFiles: logFiles || [],
+        fetchedAt,
       };
       byMap[serviceId] = entry;
-      if (entry.chat.length || entry.admin.length || (logFiles && logFiles.length)) {
-        lastGoodByService.set(serviceId, { ...entry });
-      }
+      // Always keep last-good so embeds refresh (countdown) even with 0 new lines.
+      lastGoodByService.set(serviceId, { ...entry });
+
+      console.log(
+        `[gameLogs] ok serviceId=${serviceId} map=${mapName}` +
+          ` chat=${parsed.chat.length} admin=${parsed.admin.length}` +
+          ` files=${(logFiles || []).join(',') || 'none'}` +
+          ` online=${onlineCount == null ? '?' : onlineCount}` +
+          ` lastOk=${fetchedAt}`
+      );
 
       if (guildId && parsed.chat.length) {
         const n = enrichPlayersFromChatLogs(guildId, parsed.chat, {
@@ -403,7 +461,8 @@ async function collectPerMapLogsUncached(guild, guildId = null) {
       }
     } catch (error) {
       console.warn(
-        `[gameLogs] guild pull failed serviceId=${serviceId} map=${server.name}: ${error.message}`
+        `[gameLogs] guild pull failed serviceId=${serviceId} map=${server.name}: ${error.message}` +
+          ` lastOk=${lastSuccessfulFetchAt.get(serviceId) || 'never'}`
       );
       const prev = lastGoodByService.get(serviceId);
       if (prev && /\b429\b/.test(String(error.message || ''))) {
@@ -641,7 +700,7 @@ function buildMapChatEmbed(serverName, serviceId, chatEntries, note, guild = nul
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Chat log · every 15m',
+      context: 'Chat log · every 12m',
     }
   );
 }
@@ -667,7 +726,7 @@ function buildMapAdminEmbed(serverName, serviceId, gameAdminEntries, note, guild
       author: false,
       timestamp: false,
       footer: buildMapLogFooter(serverName, serviceId),
-      context: 'Admin log · every 15m',
+      context: 'Admin log · every 12m',
     }
   );
 }

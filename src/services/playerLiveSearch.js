@@ -5,7 +5,7 @@ const {
   extractMapName,
   isGuildHeavyPollPaused,
   getGuildCooldownRemainingMs,
-  isGlobalRateLimited,
+  isPlayersRateLimited,
 } = require('./nitrado');
 const {
   upsertPlayer,
@@ -108,7 +108,7 @@ async function fetchClusterOnlinePlayersUncached(guild) {
     if (isFakeService(serviceId)) continue;
     const token = tokenForServer(server, guild);
     if (!token) continue;
-    if (isGlobalRateLimited(token)) continue;
+    if (isPlayersRateLimited(token)) continue;
 
     let mapName = server.map || server.name || serviceId;
     try {

@@ -12,10 +12,11 @@ const {
   buildMapAdminEmbed,
 } = require('./gameLogs');
 const {
-  isGuildHeavyPollPaused,
+  isGuildFilePollPaused,
 } = require('./nitrado');
+const { LOG_BOARD_INTERVAL_MS } = require('./gameLogs');
 
-const INTERVAL_MS = 60 * 60 * 1000;
+const INTERVAL_MS = LOG_BOARD_INTERVAL_MS; // 12m when not in file_server cooldown
 let timer = null;
 
 /** Warn once per guild/feature/service about missing threads (avoid interval spam). */
@@ -269,10 +270,13 @@ async function refreshGuildLogBoards(client, guildId) {
   if (wantAdmin || wantChat) {
     const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
     if (discordGuild) {
-      // Global token cooldown — skip forum sync + file_server; collect still
-      // returns last-good stale parses so Discord embeds stay alive.
-      // (Cooldown console line is emitted once from nitrado.markGlobalRateLimited.)
-      if (isGuildHeavyPollPaused(guild)) {
+      // file_server cooldown — skip forum sync (Discord-only); collect still
+      // returns last-good stale parses so Discord embeds / countdowns stay alive.
+      // games/players 429 must NOT block this path.
+      if (isGuildFilePollPaused(guild)) {
+        console.log(
+          `[logBoards] file_server cooldown guild=${guildId} — refreshing embeds from last-good`
+        );
         guildFresh = guild;
       } else {
         guildFresh = await syncMapForums(discordGuild, guildId);
@@ -280,6 +284,11 @@ async function refreshGuildLogBoards(client, guildId) {
       if ((guildFresh.nitradoAccounts || []).length) {
         try {
           collected = await collectPerMapLogs(guildFresh, guildId);
+          const maps = Object.keys(collected.byMap || {}).length;
+          console.log(
+            `[logBoards] collect done guild=${guildId} maps=${maps}` +
+              ` errors=${collected.errors?.length || 0}`
+          );
           if (collected.errors?.length) {
             console.warn(
               `[logBoards] pull errors guild=${guildId}: ${collected.errors
@@ -328,7 +337,9 @@ function startLogBoards(client) {
       console.warn('[logBoards] interval:', err.message)
     );
   }, INTERVAL_MS);
-  console.log('[scheduler] logBoards started (60m)');
+  console.log(
+    `[scheduler] logBoards started (${Math.round(INTERVAL_MS / 60000)}m)`
+  );
 }
 
 module.exports = {
