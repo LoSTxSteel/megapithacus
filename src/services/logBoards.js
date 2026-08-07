@@ -1,4 +1,4 @@
-const { getGuild, listGuildIds, updateGuild, syncServersFromNitrado } = require('./storage');
+const { getGuild, listGuildIds, updateGuild } = require('./storage');
 const {
   isFeatureEnabled,
   isFeatureConfigured,
@@ -80,15 +80,13 @@ async function editMapFeatureThread(discordGuild, guildId, featureKey, serviceId
   }
 }
 
-async function syncMapForums(discordGuild, guildId) {
+async function syncMapForums(discordGuild, guildId, client = null) {
   const guild = getGuild(guildId);
   try {
     // Do not pass softMaps — empty discovery must throw (caught below) so we
     // never overwrite existing threads with an empty map.
-    const ensured = await ensureMapForums(discordGuild, guild);
-    if (ensured.discovered?.length) {
-      syncServersFromNitrado(guildId, ensured.discovered);
-    }
+    // ensureMapForums syncs guild.servers when discovery succeeds.
+    await ensureMapForums(discordGuild, guild, { client });
     return getGuild(guildId);
   } catch (error) {
     console.warn(`[logBoards] map forum sync skipped guild=${guildId}: ${error.message}`);
@@ -131,7 +129,8 @@ async function refreshAdminBoard(client, guildId, precollected = null, guildFres
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const guildFresh = guildFreshIn || (await syncMapForums(discordGuild, guildId));
+  const guildFresh =
+    guildFreshIn || (await syncMapForums(discordGuild, guildId, client));
   if (!countMapLogThreads(guildFresh, 'adminLogging')) {
     const key = `${guildId}:adminLogging:nothreads`;
     if (!skipConfiguredWarned.has(key)) {
@@ -206,7 +205,8 @@ async function refreshChatBoard(client, guildId, precollected = null, guildFresh
   const discordGuild = await client.guilds.fetch(guildId).catch(() => null);
   if (!discordGuild) return;
 
-  const guildFresh = guildFreshIn || (await syncMapForums(discordGuild, guildId));
+  const guildFresh =
+    guildFreshIn || (await syncMapForums(discordGuild, guildId, client));
   if (!countMapLogThreads(guildFresh, 'chatLogs')) {
     const key = `${guildId}:chatLogs:nothreads`;
     if (!skipConfiguredWarned.has(key)) {
@@ -279,7 +279,7 @@ async function refreshGuildLogBoards(client, guildId) {
         );
         guildFresh = guild;
       } else {
-        guildFresh = await syncMapForums(discordGuild, guildId);
+        guildFresh = await syncMapForums(discordGuild, guildId, client);
       }
       if ((guildFresh.nitradoAccounts || []).length) {
         try {

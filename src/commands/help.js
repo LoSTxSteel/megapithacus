@@ -63,6 +63,8 @@ module.exports = {
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/playersearch` — live online check + player profile (ban/unban/kick)',
+            '`/ban` — ban by gamertag / id (`identifier`, `duration`, `reason`)',
+            '`/unban` — lift a ban by gamertag / id (`identifier`)',
           ].join('\n'),
         },
         {

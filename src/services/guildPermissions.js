@@ -166,6 +166,19 @@ function canUsePay(interaction) {
   return memberHasAnyRole(interaction, payRoles);
 }
 
+/**
+ * Player ban / unban / kick (slash + playersearch wizard).
+ * Manage Server, bot setup role, or Discord Ban Members.
+ */
+function canModeratePlayers(interaction) {
+  if (isGuildOwner(interaction) || memberHasManageGuild(interaction)) return true;
+  if (memberHasBotSetupRole(interaction)) return true;
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) {
+    return true;
+  }
+  return false;
+}
+
 function formatAreaRoles(guildId, areaKey) {
   const roles = getPermissions(guildId)[areaKey] || [];
   if (!roles.length) {
@@ -192,5 +205,6 @@ module.exports = {
   canManageGamerscore,
   canManageAdminPay,
   canUsePay,
+  canModeratePlayers,
   formatAreaRoles,
 };

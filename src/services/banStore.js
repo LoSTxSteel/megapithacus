@@ -113,6 +113,46 @@ function parseCustomDuration(input) {
   return { ms, label };
 }
 
+/**
+ * Parse slash-command / UI duration strings: `1h`, `7d`, `permanent`, `0`, etc.
+ * @returns {{ durationValue: string, durationLabel: string, durationMs: number|null } | null}
+ */
+function parseBanDurationInput(input) {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (!raw) return null;
+
+  if (
+    raw === '0' ||
+    raw === 'perm' ||
+    raw === 'permanent' ||
+    raw === 'perma' ||
+    raw === 'forever'
+  ) {
+    return {
+      durationValue: 'perm',
+      durationLabel: 'Permanent',
+      durationMs: null,
+    };
+  }
+
+  const meta = durationMeta(raw);
+  if (meta && meta.value !== 'custom') {
+    return {
+      durationValue: meta.value,
+      durationLabel: meta.label,
+      durationMs: meta.ms,
+    };
+  }
+
+  const custom = parseCustomDuration(raw);
+  if (!custom) return null;
+  return {
+    durationValue: 'custom',
+    durationLabel: custom.label,
+    durationMs: custom.ms,
+  };
+}
+
 function createBan(entry) {
   const all = readAll();
   const ban = {
@@ -250,6 +290,7 @@ module.exports = {
   reasonLabel,
   unbanReasonLabel,
   parseCustomDuration,
+  parseBanDurationInput,
   createBan,
   updateBan,
   deactivateBan,

@@ -517,6 +517,10 @@ function removeFromList(guildId, listKey, entry, { caseInsensitive = false } = {
   return { removed: list.length !== before.length, list };
 }
 
+/**
+ * Add a single server. Callers with a Discord guild should follow with
+ * `repairMapLogsForServers(discordGuild, client)` so map log threads appear.
+ */
 function addServer(guildId, server) {
   const guild = getGuild(guildId);
   const serviceId = String(server.serviceId).trim();
@@ -540,7 +544,14 @@ function addServer(guildId, server) {
   return entry;
 }
 
+/**
+ * Replace guild.servers from a Nitrado discovery list.
+ * @returns {{ servers: object[], added: object[], removed: string[] }}
+ */
 function syncServersFromNitrado(guildId, discovered) {
+  const previousIds = new Set(
+    (getGuild(guildId).servers || []).map((s) => String(s.serviceId))
+  );
   const servers = [];
 
   for (const item of discovered) {
@@ -563,7 +574,10 @@ function syncServersFromNitrado(guildId, discovered) {
   }
 
   updateGuild(guildId, { servers });
-  return servers;
+  const added = servers.filter((s) => !previousIds.has(String(s.serviceId)));
+  const currentIds = new Set(servers.map((s) => String(s.serviceId)));
+  const removed = [...previousIds].filter((id) => !currentIds.has(id));
+  return { servers, added, removed };
 }
 
 function removeServer(guildId, target) {

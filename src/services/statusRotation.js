@@ -1,5 +1,4 @@
 const { ActivityType } = require('discord.js');
-const { ensureBrandLogo } = require('./brandLogo');
 
 const ROTATE_MS = 15 * 1000;
 
@@ -55,9 +54,6 @@ async function tick(client) {
 
 function startStatusRotation(client) {
   if (timer) return;
-  ensureBrandLogo(client).catch((error) => {
-    console.warn('Brand logo setup failed:', error.message);
-  });
   tick(client);
   timer = setInterval(() => {
     tick(client);

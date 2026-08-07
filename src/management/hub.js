@@ -24,7 +24,7 @@ const { testToken, listAllServicesForGuild } = require('../services/nitrado');
 const {
   FEATURE_META,
   setupFeature,
-  ensureMapForums,
+  repairMapLogsForServers,
   countMapLogThreads,
   isFeatureEnabled,
   isFeatureConfigured,
@@ -963,18 +963,25 @@ async function handleManagement(interaction) {
       const errors = discovered.filter((d) => d.error);
 
       if (action === 'sync-servers') {
-        const synced = syncServersFromNitrado(guildId, discovered);
+        const { servers: synced, added } = syncServersFromNitrado(
+          guildId,
+          discovered
+        );
         let mapEnsureNote = '';
 
         // Always repair Admin / Chat / Join-Leave forums + per-map threads after sync
         if (interaction.guild && synced.length) {
           try {
-            const ensured = await ensureMapForums(
+            const ensured = await repairMapLogsForServers(
               interaction.guild,
-              getGuild(guildId)
+              interaction.client,
+              { forcePop: true }
             );
             const mapCount = countMapLogThreads(getGuild(guildId));
             mapEnsureNote = ` Ensured **admin-logs** / **chat-logs** / **join-leave-logs** with **${mapCount}** map thread(s) each.`;
+            if (added.length) {
+              mapEnsureNote += ` Imported **${added.length}** new map(s).`;
+            }
             if (ensured.errors?.length) {
               mapEnsureNote += ` _(${ensured.errors.slice(0, 2).join('; ')})_`;
             }
@@ -1051,6 +1058,36 @@ async function handleManagement(interaction) {
         return;
       }
 
+      // Auto-import maps + repair log threads (no manual Sync servers click)
+      let importNote = '';
+      try {
+        const discovered = await listAllServicesForGuild(getGuild(guildId));
+        const { servers, added } = syncServersFromNitrado(guildId, discovered);
+        if (interaction.guild && servers.length) {
+          const ensured = await repairMapLogsForServers(
+            interaction.guild,
+            interaction.client,
+            { forcePop: true }
+          );
+          const mapCount = countMapLogThreads(getGuild(guildId));
+          importNote = [
+            '',
+            `Auto-synced **${servers.length}** server(s)` +
+              (added.length ? ` (**${added.length}** new)` : '') +
+              `.`,
+            `Ensured log forums with **${mapCount}** map thread(s) each.`,
+          ].join('\n');
+          if (ensured.errors?.length) {
+            importNote += `\n_(${ensured.errors.slice(0, 2).join('; ')})_`;
+          }
+        } else if (!servers.length) {
+          importNote =
+            '\n\n_No Nitrado services found on this token yet — Sync servers later if maps appear._';
+        }
+      } catch (syncError) {
+        importNote = `\n\nToken saved, but auto-sync failed: ${syncError.message}. Use **Sync servers to bot**.`;
+      }
+
       await interaction.editReply({
         embeds: [
           baseEmbed('Nitrado token saved').setDescription(
@@ -1058,8 +1095,7 @@ async function handleManagement(interaction) {
               `Label: **${saved.account.label}**`,
               `Token: \`${maskToken(saved.account.token)}\``,
               `Services visible: **${probe.serviceCount}**`,
-              '',
-              'Open **Server Setup** again and use **Sync servers to bot** to import maps for `/pop`.',
+              importNote,
             ].join('\n')
           ),
         ],

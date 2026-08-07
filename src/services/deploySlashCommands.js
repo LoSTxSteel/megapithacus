@@ -12,6 +12,8 @@ const REQUIRED_COMMANDS = [
   'upload',
   'adminpay',
   'pay',
+  'ban',
+  'unban',
 ];
 
 /**

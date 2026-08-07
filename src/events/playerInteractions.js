@@ -3,7 +3,6 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
-  PermissionFlagsBits,
 } = require('discord.js');
 const { EPHEMERAL } = require('../utils/ephemeral');
 const { getPlayerById } = require('../services/playerDb');
@@ -28,9 +27,10 @@ const {
 } = require('../services/banStore');
 const { errorEmbed, successEmbed } = require('../utils/embeds');
 const { buildBanLogEmbed, buildUnbanLogEmbed } = require('../services/banLog');
+const { canModeratePlayers } = require('../services/guildPermissions');
 
 function canModerate(interaction) {
-  return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+  return canModeratePlayers(interaction);
 }
 
 function customDurationModal(profileId) {
@@ -77,7 +77,11 @@ async function handlePlayerInteraction(interaction) {
 
   if (!canModerate(interaction)) {
     const payload = {
-      embeds: [errorEmbed('You need **Manage Server** to moderate players.')],
+      embeds: [
+        errorEmbed(
+          'You need **Manage Server**, the **Megapithacus** role, or **Ban Members** to moderate players.'
+        ),
+      ],
       ...EPHEMERAL,
     };
     if (interaction.replied || interaction.deferred) await interaction.followUp(payload);

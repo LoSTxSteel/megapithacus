@@ -416,8 +416,10 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     }
   }
 
+  let addedServers = [];
   if (discovered?.length) {
-    syncServersFromNitrado(discordGuild.id, discovered);
+    const synced = syncServersFromNitrado(discordGuild.id, discovered);
+    addedServers = synced.added || [];
     guildConfig = getGuild(discordGuild.id);
   }
 
@@ -468,14 +470,60 @@ async function ensureMapForums(discordGuild, guildConfig, options = {}) {
     },
   });
 
+  // When newly imported maps appear, refresh Server Status if the client is available
+  if (addedServers.length && options.client) {
+    try {
+      const { refreshGuildPop } = require('./popManager');
+      await refreshGuildPop(options.client, discordGuild.id).catch(() => null);
+    } catch {
+      // ignore — pop refresh is best-effort
+    }
+  }
+
   return {
     mapForums: featureStates,
     featureStates,
     targets,
     discovered,
+    addedServers,
     errors,
     category,
   };
+}
+
+/**
+ * After guild.servers gains new maps (sync / token import / addServer),
+ * repair Admin / Chat / Join-Leave forums + per-map threads (same as Sync servers).
+ * Optionally refreshes Server Status pop.
+ */
+async function repairMapLogsForServers(discordGuild, client = null, options = {}) {
+  const guildConfig = getGuild(discordGuild.id);
+  if (!(guildConfig.servers || []).length && !options.force) {
+    return { skipped: true, addedServers: [], errors: [] };
+  }
+
+  const ensured = await ensureMapForums(discordGuild, getGuild(discordGuild.id), {
+    softMaps: options.softMaps,
+    client: options.refreshPop === false ? null : client,
+  });
+
+  if (
+    options.refreshPop !== false &&
+    client &&
+    !(ensured.addedServers || []).length
+  ) {
+    // Still refresh pop when caller asked (e.g. full sync) even if no brand-new IDs
+    if (options.forcePop) {
+      try {
+        const { refreshGuildPop } = require('./popManager');
+        await refreshGuildPop(client, discordGuild.id).catch(() => null);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return ensured;
 }
 
 /** @deprecated Use ensureMapForums — kept for callers during migration */
@@ -703,6 +751,7 @@ module.exports = {
   setupFeature,
   ensureMapForums,
   ensureMapForumThreads,
+  repairMapLogsForServers,
   markMapLogFeaturesReady,
   discoverMapTargets,
   isFeatureEnabled,

@@ -3,17 +3,19 @@ const { brand } = require('../config');
 
 const FOOTER_CUSTOM_MAX = 48;
 
-/** Bot avatar / override URL used on author + footer icons */
-let brandIconUrl = process.env.BRAND_ICON_URL || null;
+/**
+ * Brand icon URL is intentionally unused on embeds (no logo on author/footer/thumbnail).
+ * Kept for API compatibility with brandLogo / callers.
+ */
+let brandIconUrl = null;
 
-function setBrandIcon(url) {
-  if (url && String(url).trim()) {
-    brandIconUrl = String(url).trim();
-  }
+function setBrandIcon(_url) {
+  // No-op: Megapithacus logo is not attached to embeds.
+  brandIconUrl = null;
 }
 
 function getBrandIcon() {
-  return brandIconUrl || null;
+  return null;
 }
 
 function parseEmbedColor(value) {
@@ -57,26 +59,24 @@ function footerForGuild(guild, context = null) {
 }
 
 function watermarkAuthor() {
-  const author = { name: brand.name };
-  const icon = getBrandIcon();
-  if (icon) author.iconURL = icon;
-  return author;
+  // Text-only author — no brand logo iconURL
+  return { name: brand.name };
 }
 
 /**
  * Apply Megapithacus branding to any embed:
- * author/footer icons, brand colour, watermark, timestamp.
+ * brand colour, watermark text, timestamp — no logo icons/thumbnails.
  *
  * Options:
  * - color: override embed accent (number or #hex)
  * - author: false to omit the brand author line
- * - footer: string or { text, iconURL? } to replace default footer text
+ * - footer: string or { text } to replace default footer text
  * - timestamp: false | Date | number (default: now)
- * - context / thumbnail: unchanged
+ * - context: footer context label
+ * - thumbnail: ignored for brand logo (callers may setThumbnail themselves for user avatars)
  */
 function brandEmbed(embed, guild = null, options = {}) {
   const context = options.context ?? null;
-  const icon = getBrandIcon();
 
   const overrideColor = parseEmbedColor(options.color);
   embed.setColor(overrideColor ?? colorForGuild(guild));
@@ -88,15 +88,9 @@ function brandEmbed(embed, guild = null, options = {}) {
   if (options.footer != null) {
     const raw =
       typeof options.footer === 'string' ? options.footer : options.footer?.text;
-    const footer = { text: String(raw ?? '').slice(0, 2048) };
-    const footerIcon =
-      (typeof options.footer === 'object' && options.footer?.iconURL) || icon;
-    if (footerIcon) footer.iconURL = footerIcon;
-    embed.setFooter(footer);
+    embed.setFooter({ text: String(raw ?? '').slice(0, 2048) });
   } else {
-    const footer = { text: footerForGuild(guild, context) };
-    if (icon) footer.iconURL = icon;
-    embed.setFooter(footer);
+    embed.setFooter({ text: footerForGuild(guild, context) });
   }
 
   if (options.timestamp === false) {
@@ -107,16 +101,8 @@ function brandEmbed(embed, guild = null, options = {}) {
     embed.setTimestamp();
   }
 
-  const wantThumb =
-    options.thumbnail === true ||
-    (options.thumbnail !== false &&
-      context &&
-      /^(Hub|Help|Customise|Donations|Credits|Rewards|Boost rewards|Player DB|Deploy|Feature board|Admin Pay)/i.test(
-        context
-      ));
-  if (wantThumb && icon && !embed.data.thumbnail) {
-    embed.setThumbnail(icon);
-  }
+  // Do not attach brand logo as thumbnail. Intentional user/avatar thumbnails
+  // set by callers via embed.setThumbnail(...) are left untouched.
 
   return embed;
 }
@@ -130,16 +116,12 @@ function baseEmbed(title, options = {}) {
     accent: options.accent,
     context: options.context ?? null,
     timestamp: options.timestamp,
-    thumbnail: options.thumbnail,
   });
   if (options.footer) {
     const text = String(options.footer);
-    const footer = {
+    embed.setFooter({
       text: text.includes(brand.name) ? text : `${text} · ${brand.name}`.slice(0, 2048),
-    };
-    const icon = getBrandIcon();
-    if (icon) footer.iconURL = icon;
-    embed.setFooter(footer);
+    });
   }
   return embed;
 }
@@ -153,7 +135,6 @@ function guildEmbed(guild, title, options = {}) {
     accent: options.accent,
     context: options.context ?? null,
     timestamp: options.timestamp,
-    thumbnail: options.thumbnail,
   });
 }
 
@@ -163,7 +144,7 @@ function errorEmbed(message) {
       .setTitle('Something went wrong')
       .setDescription(message),
     null,
-    { context: 'Error', thumbnail: true }
+    { context: 'Error' }
   );
 }
 
@@ -171,7 +152,7 @@ function successEmbed(title, description, guild = null) {
   return brandEmbed(
     new EmbedBuilder().setTitle(title).setDescription(description),
     guild,
-    { context: 'Success', thumbnail: true }
+    { context: 'Success' }
   );
 }
 
