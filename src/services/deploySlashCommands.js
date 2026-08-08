@@ -8,6 +8,7 @@ const REQUIRED_COMMANDS = [
   'rewardmanager',
   'servermanager',
   'gamerscoremanager',
+  'spoofmanager',
   'rollback',
   'upload',
   'adminpay',

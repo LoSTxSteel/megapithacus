@@ -36,6 +36,16 @@ function defaultGamerscoreDetection() {
   };
 }
 
+function defaultSpoofDetection() {
+  return {
+    /**
+     * Stable id → { displayed, mismatch, at }.
+     * Re-check only when the Nitrado displayed name changes.
+     */
+    checkedPlayers: {},
+  };
+}
+
 function defaultFeatureSetup() {
   return {
     categoryId: null,
@@ -47,6 +57,7 @@ function defaultFeatureSetup() {
     chatLogs: { forumId: null, ready: false, threads: {} },
     joinLeaveLogs: { forumId: null, ready: false, threads: {} },
     gamerscoreDetection: { channelId: null, ready: false },
+    spoofDetection: { channelId: null, ready: false },
     /** @deprecated legacy per-map forums — cleared on ensure/setup */
     mapForums: {},
   };
@@ -150,9 +161,11 @@ function defaultGuild() {
       chatLogs: false,
       joinLeaveLogs: false,
       gamerscoreDetection: false,
+      spoofDetection: false,
     },
     featureSetup: defaultFeatureSetup(),
     gamerscoreDetection: defaultGamerscoreDetection(),
+    spoofDetection: defaultSpoofDetection(),
     botSetupRoleId: null,
     botCustom: defaultBotCustom(),
     pingRoles: defaultPingRoles(),
@@ -162,6 +175,7 @@ function defaultGuild() {
       rewardManager: [],
       creditManager: [],
       gamerscoreManager: [],
+      spoofManager: [],
       adminPay: [],
     },
     credits: defaultCredits(),
@@ -304,11 +318,16 @@ function getGuild(guildId) {
       rewardManager: current.permissions?.rewardManager || [],
       creditManager: current.permissions?.creditManager || [],
       gamerscoreManager: current.permissions?.gamerscoreManager || [],
+      spoofManager: current.permissions?.spoofManager || [],
       adminPay: current.permissions?.adminPay || [],
     },
     gamerscoreDetection: {
       ...defaults.gamerscoreDetection,
       ...(current.gamerscoreDetection || {}),
+    },
+    spoofDetection: {
+      ...defaults.spoofDetection,
+      ...(current.spoofDetection || {}),
     },
     credits: {
       ...defaults.credits,
@@ -405,6 +424,23 @@ function updateGuild(guildId, patch) {
       ...defaultGamerscoreDetection(),
       ...(current.gamerscoreDetection || {}),
       ...patch.gamerscoreDetection,
+      checkedPlayers:
+        patchChecked && typeof patchChecked === 'object'
+          ? patchChecked
+          : prevChecked,
+    };
+  }
+  if (patch.spoofDetection) {
+    const prevChecked =
+      current.spoofDetection?.checkedPlayers &&
+      typeof current.spoofDetection.checkedPlayers === 'object'
+        ? current.spoofDetection.checkedPlayers
+        : {};
+    const patchChecked = patch.spoofDetection.checkedPlayers;
+    next.spoofDetection = {
+      ...defaultSpoofDetection(),
+      ...(current.spoofDetection || {}),
+      ...patch.spoofDetection,
       checkedPlayers:
         patchChecked && typeof patchChecked === 'object'
           ? patchChecked
@@ -616,4 +652,5 @@ module.exports = {
   defaultAdminPay,
   normalizeAdminPay,
   defaultGamerscoreDetection,
+  defaultSpoofDetection,
 };

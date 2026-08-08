@@ -50,7 +50,7 @@ module.exports = {
             '• **Server Setup** — Nitrado tokens & sync',
             '• **Server Management** — ping roles for bans/unbans/kicks',
             '• **Customise Bot** — colour & footer (watermark always stays)',
-            '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat, Join/Leave, Gamerscore',
+            '• **Feature Management** — Server Status, Ban, Donation, Admin, Chat, Join/Leave, Gamerscore, Spoof',
             '',
             '`/rewardmanager` — boost & invite rewards hub',
             '`/creditmanager` — credit hub (add, remove, wipe seasonal/permanent)',
@@ -60,6 +60,7 @@ module.exports = {
             '`/rollback` — restore Nitrado backup or dated SavedArks `.ark`',
             '`/upload` — upload a custom `.ark` save (Discord size limits apply)',
             '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
+            '`/spoofmanager` — Xbox gamertag spoof / name mismatch flags',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/playersearch` — live online check + player profile (ban/unban/kick)',
@@ -70,12 +71,12 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — hub to set which roles can use Donations / Rewards / Credits / Gamerscore / Server power / Admin Pay (owner only)',
+            '`/permissions` — hub to set which roles can use Donations / Rewards / Credits / Gamerscore / Spoof / Server power / Admin Pay (owner only)',
         },
         {
           name: 'Feature setup',
           value:
-            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Gamerscore Detection** uses `#gamerscore-detection`. **Server Status** refreshes every 10m; Admin/Chat every 15m; joins/leaves every 5m.',
+            'Run `/setup` first for the category + admin role. Admin, Chat, and Join/Leave each use a shared forum with **one thread per map**. Donation logs use their own forum. **Gamerscore Detection** uses `#gamerscore-detection`. **Spoof Detection** uses `#spoof-detection`. **Server Status** refreshes every 10m; Admin/Chat every 15m; joins/leaves every 5m.',
         }
       );
 

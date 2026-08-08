@@ -36,6 +36,9 @@ const {
   punishmentSummary,
   postSetupReadyEmbed,
 } = require('../services/gamerscoreDetection');
+const {
+  postSetupReadyEmbed: postSpoofSetupReadyEmbed,
+} = require('../services/spoofDetection');
 const { baseEmbed, errorEmbed } = require('../utils/embeds');
 const { customisePanel, handleCustomiseInteraction } = require('./customiseBot');
 const { serverPanel, handleServerInteraction } = require('./serverManagement');
@@ -371,6 +374,13 @@ function featureSetupText(guild, key) {
     extras.push(
       'Setup includes min score + kick/permanent-ban. Also `/gamerscoremanager`.'
     );
+  }
+  if (key === 'spoofDetection') {
+    extras.push(
+      'Compares Nitrado / in-game displayed name to Xbox Live gamertag on join.'
+    );
+    extras.push('Flags mismatches only — fail-open on API errors (no punishment).');
+    extras.push('Also `/spoofmanager`.');
   }
 
   const destLine = FEATURE_META[key]?.perMap
@@ -1159,6 +1169,11 @@ async function handleManagement(interaction) {
       }
       if (['adminLogging', 'chatLogs', 'joinLeaveLogs'].includes(key)) {
         await refreshGuildLogBoards(interaction.client, guildId).catch(() => null);
+      }
+      if (key === 'spoofDetection') {
+        await postSpoofSetupReadyEmbed(interaction.guild, guildId).catch((err) =>
+          console.warn('Spoof setup embed failed:', err.message)
+        );
       }
       const mapNote =
         typeof result.mapCount === 'number'

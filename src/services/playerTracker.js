@@ -19,6 +19,10 @@ const {
   handleGamerscoreJoin,
   isGamerscoreChecked,
 } = require('./gamerscoreDetection');
+const {
+  handleSpoofJoin,
+  isSpoofChecked,
+} = require('./spoofDetection');
 
 /** Join/leave poll — games/players is lighter than file_server; keep responsive. */
 const INTERVAL_MS = 4 * 60 * 1000;
@@ -43,7 +47,16 @@ function warnSkipOnce(guildId, reason) {
   console.warn(`[playerTracker] skip guild=${guildId}: ${reason}`);
 }
 
-async function scanServer(client, guildId, guild, server, discordGuild, wantsJoinLeave, wantsGamerscore) {
+async function scanServer(
+  client,
+  guildId,
+  guild,
+  server,
+  discordGuild,
+  wantsJoinLeave,
+  wantsGamerscore,
+  wantsSpoof
+) {
   const token = tokenForServer(server, guild);
   if (!token) return;
 
@@ -136,6 +149,35 @@ async function scanServer(client, guildId, guild, server, discordGuild, wantsJoi
         )
       );
     }
+
+    // Spoof: joins + bootstrap; skip if already checked for this displayed name.
+    const displayedForSpoof = profile.gamertag
+      ? String(profile.gamertag).trim()
+      : '';
+    const shouldCheckSpoof =
+      wantsSpoof &&
+      discordGuild &&
+      key &&
+      displayedForSpoof &&
+      (isJoin || isBootstrap) &&
+      !isSpoofChecked(guildId, profile, displayedForSpoof);
+    if (shouldCheckSpoof) {
+      console.log(
+        `[playerTracker] spoof queue guild=${guildId} ` +
+          `gt=${displayedForSpoof} join=${isJoin} bootstrap=${isBootstrap} ` +
+          `platformId=${profile.platformId || '(none)'} serviceId=${serviceId}`
+      );
+      void handleSpoofJoin(discordGuild, guildId, {
+        profile,
+        mapName,
+        serverName: server.name,
+        serviceId,
+      }).catch((err) =>
+        console.warn(
+          `[playerTracker] spoof detection failed: ${err?.stack || err.message || err}`
+        )
+      );
+    }
   }
 
   const left = markOfflineExcept(guildId, onlineKeys, serviceId);
@@ -195,6 +237,9 @@ async function scanGuild(client, guildId) {
   const wantsGamerscore =
     isFeatureEnabled(guild, 'gamerscoreDetection') &&
     isFeatureConfigured(guild, 'gamerscoreDetection');
+  const wantsSpoof =
+    isFeatureEnabled(guild, 'spoofDetection') &&
+    isFeatureConfigured(guild, 'spoofDetection');
 
   if (joinLeaveEnabled && !wantsJoinLeave) {
     warnSkipOnce(
@@ -211,7 +256,15 @@ async function scanGuild(client, guildId) {
     );
   }
 
-  if ((wantsJoinLeave || wantsGamerscore) && client) {
+  const spoofEnabled = isFeatureEnabled(guild, 'spoofDetection');
+  if (spoofEnabled && !wantsSpoof) {
+    warnSkipOnce(
+      guildId,
+      'spoofDetection enabled but not configured (missing #spoof-detection — run Feature Setup)'
+    );
+  }
+
+  if ((wantsJoinLeave || wantsGamerscore || wantsSpoof) && client) {
     discordGuild = await client.guilds.fetch(guildId).catch(() => null);
     if (!discordGuild) {
       warnSkipOnce(guildId, 'Discord guild not reachable from this bot');
@@ -236,7 +289,8 @@ async function scanGuild(client, guildId) {
         server,
         discordGuild,
         wantsJoinLeave,
-        wantsGamerscore
+        wantsGamerscore,
+        wantsSpoof
       );
     } catch (error) {
       console.warn(

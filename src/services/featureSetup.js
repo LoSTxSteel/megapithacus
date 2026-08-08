@@ -9,7 +9,7 @@ const CATEGORY_NAME = 'Megapithacus';
 const TEXT_LIVE_FEATURES = new Set(['popManager']);
 
 /** Plain text log channel (no live board message) */
-const TEXT_LOG_FEATURES = new Set(['gamerscoreDetection']);
+const TEXT_LOG_FEATURES = new Set(['gamerscoreDetection', 'spoofDetection']);
 
 /**
  * Three Discord forums (Admin / Chat / Join-Leave). Each holds one thread per map.
@@ -107,6 +107,16 @@ const FEATURE_META = {
     channelName: 'gamerscore-detection',
     channelTopic:
       'Xbox gamerscore join checks — fails and verify errors from Megapithacus.',
+    refreshMinutes: null,
+  },
+  spoofDetection: {
+    key: 'spoofDetection',
+    label: 'Spoof Detection',
+    short:
+      'Compare Nitrado / in-game displayed name to Xbox Live gamertag on join; flags mismatches in #spoof-detection',
+    channelName: 'spoof-detection',
+    channelTopic:
+      'Xbox gamertag spoof / name mismatch flags from Megapithacus (fail-open — no punishment).',
     refreshMinutes: null,
   },
 };
