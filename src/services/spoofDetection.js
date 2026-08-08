@@ -126,14 +126,7 @@ async function postSetupReadyEmbed(discordGuild, guildId) {
     new EmbedBuilder()
       .setTitle('Spoof Detection ready')
       .setColor(0x9b59b6)
-      .setDescription(
-        [
-          'This feature is **set up and working**.',
-          'When a player joins a map, Megapithacus compares the **Nitrado / in-game displayed name** to the **official Xbox Live gamertag** (OpenXBL).',
-          '',
-          'Mismatches are flagged here. Matches and API failures are quiet (fail-open — no punishment).',
-        ].join('\n')
-      ),
+      .setDescription('This feature is **set up and working**.'),
     guild,
     { context: 'Spoof detection' }
   );

@@ -112,11 +112,9 @@ const FEATURE_META = {
   spoofDetection: {
     key: 'spoofDetection',
     label: 'Spoof Detection',
-    short:
-      'Compare Nitrado / in-game displayed name to Xbox Live gamertag on join; flags mismatches in #spoof-detection',
+    short: 'Flag gamertag name mismatches on join; logs to #spoof-detection',
     channelName: 'spoof-detection',
-    channelTopic:
-      'Xbox gamertag spoof / name mismatch flags from Megapithacus (fail-open — no punishment).',
+    channelTopic: 'Spoof Detection flags from Megapithacus.',
     refreshMinutes: null,
   },
 };
