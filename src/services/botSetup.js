@@ -182,6 +182,7 @@ async function wipeBotChannels(discordGuild, guildConfig) {
       chatLogs: { forumId: null, ready: false, threads: {} },
       joinLeaveLogs: { forumId: null, ready: false, threads: {} },
       gamerscoreDetection: { channelId: null, ready: false },
+      spoofDetection: { channelId: null, ready: false },
     },
     features: {
       popManager: false,
@@ -191,6 +192,7 @@ async function wipeBotChannels(discordGuild, guildConfig) {
       chatLogs: false,
       joinLeaveLogs: false,
       gamerscoreDetection: false,
+      spoofDetection: false,
     },
   });
 
@@ -294,21 +296,22 @@ async function rebuildLoggingChannels(discordGuild) {
 }
 
 /**
- * Full /setup: scan → wipe logging channels → recreate → admin role + permissions.
+ * Full /setup: Megapithacus role first → wipe → recreate staff-only log channels.
+ * Role must exist before channel create so overwrites can allow ViewChannel.
  */
 async function runFullSetup(discordGuild) {
   const guildId = discordGuild.id;
   const guildConfig = getGuild(guildId);
 
-  const wipe = await wipeBotChannels(discordGuild, guildConfig);
-  const rebuild = await rebuildLoggingChannels(discordGuild);
   const roleResult = await ensureAdminRole(
     discordGuild,
-    getGuild(guildId).botSetupRoleId
+    guildConfig.botSetupRoleId
   );
-
   updateGuild(guildId, { botSetupRoleId: roleResult.role.id });
   const areas = grantRoleToBotAreas(guildId, roleResult.role.id);
+
+  const wipe = await wipeBotChannels(discordGuild, getGuild(guildId));
+  const rebuild = await rebuildLoggingChannels(discordGuild);
 
   return {
     wipe,

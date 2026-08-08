@@ -135,6 +135,135 @@ function emptyBoardEmbed(title, blurb, minutes, guild = null) {
   );
 }
 
+function resolveMegapithacusRoleId(discordGuild) {
+  const guildConfig = getGuild(discordGuild.id);
+  if (guildConfig.botSetupRoleId) {
+    const byId = discordGuild.roles.cache.get(guildConfig.botSetupRoleId);
+    if (byId) return byId.id;
+  }
+  const byName = discordGuild.roles.cache.find(
+    (r) => r.name === 'Megapithacus' && !r.managed
+  );
+  return byName?.id || null;
+}
+
+/**
+ * Staff-only overwrites for Megapithacus log forums/channels.
+ * @everyone cannot view; Megapithacus setup role + bot can.
+ */
+function buildLogChannelOverwrites(discordGuild) {
+  const everyoneId = discordGuild.id;
+  const setupRoleId = resolveMegapithacusRoleId(discordGuild);
+  const botId = discordGuild.members.me?.id || discordGuild.client?.user?.id;
+
+  const overwrites = [
+    {
+      id: everyoneId,
+      deny: [PermissionFlagsBits.ViewChannel],
+    },
+  ];
+
+  if (setupRoleId) {
+    overwrites.push({
+      id: setupRoleId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.SendMessagesInThreads,
+        PermissionFlagsBits.CreatePublicThreads,
+      ],
+    });
+  }
+
+  if (botId) {
+    overwrites.push({
+      id: botId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ManageMessages,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.SendMessagesInThreads,
+        PermissionFlagsBits.CreatePublicThreads,
+        PermissionFlagsBits.ManageThreads,
+      ],
+    });
+  }
+
+  return overwrites;
+}
+
+function overwriteAllows(overwrite, bit) {
+  if (!overwrite) return false;
+  try {
+    return overwrite.allow?.has?.(bit) === true;
+  } catch {
+    return false;
+  }
+}
+
+function overwriteDenies(overwrite, bit) {
+  if (!overwrite) return false;
+  try {
+    return overwrite.deny?.has?.(bit) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when @everyone is hidden and setup role + bot can view.
+ * If setup role is missing, only check everyone deny + bot allow.
+ */
+function logChannelPermissionsOk(channel, discordGuild) {
+  if (!channel?.permissionOverwrites?.cache) return false;
+  const everyone = channel.permissionOverwrites.cache.get(discordGuild.id);
+  if (!overwriteDenies(everyone, PermissionFlagsBits.ViewChannel)) {
+    return false;
+  }
+
+  const botId = discordGuild.members.me?.id || discordGuild.client?.user?.id;
+  if (botId) {
+    const botOw = channel.permissionOverwrites.cache.get(botId);
+    if (!overwriteAllows(botOw, PermissionFlagsBits.ViewChannel)) return false;
+    if (!overwriteAllows(botOw, PermissionFlagsBits.SendMessages)) return false;
+  }
+
+  const setupRoleId = resolveMegapithacusRoleId(discordGuild);
+  if (setupRoleId) {
+    const roleOw = channel.permissionOverwrites.cache.get(setupRoleId);
+    if (!overwriteAllows(roleOw, PermissionFlagsBits.ViewChannel)) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Apply / repair staff-only overwrites on a log forum or text channel.
+ */
+async function applyLogChannelPermissions(channel, discordGuild) {
+  if (!channel?.permissionOverwrites?.set) return { ok: false, reason: 'no-channel' };
+  if (logChannelPermissionsOk(channel, discordGuild)) {
+    return { ok: true, skipped: true };
+  }
+
+  const overwrites = buildLogChannelOverwrites(discordGuild);
+  try {
+    await channel.permissionOverwrites.set(overwrites, 'Megapithacus log channel staff-only');
+    return { ok: true, repaired: true };
+  } catch (error) {
+    console.warn(
+      `[featureSetup] log perms failed channel=${channel.id}: ${error.message}`
+    );
+    return { ok: false, error: error.message };
+  }
+}
+
 async function ensureCategory(discordGuild, existingCategoryId) {
   if (existingCategoryId) {
     const existing = await discordGuild.channels.fetch(existingCategoryId).catch(() => null);
@@ -159,6 +288,7 @@ async function ensureForum(discordGuild, category, forumName, topic, existingFor
   if (existingForumId) {
     const existing = await discordGuild.channels.fetch(existingForumId).catch(() => null);
     if (existing && existing.type === ChannelType.GuildForum) {
+      await applyLogChannelPermissions(existing, discordGuild);
       return existing;
     }
   }
@@ -169,25 +299,38 @@ async function ensureForum(discordGuild, category, forumName, topic, existingFor
       c.parentId === category.id &&
       c.name === forumName
   );
-  if (byName) return byName;
+  if (byName) {
+    await applyLogChannelPermissions(byName, discordGuild);
+    return byName;
+  }
 
-  return discordGuild.channels.create({
+  const created = await discordGuild.channels.create({
     name: forumName,
     type: ChannelType.GuildForum,
     parent: category.id,
     topic,
+    permissionOverwrites: buildLogChannelOverwrites(discordGuild),
     reason: 'Megapithacus feature setup',
   });
+  return created;
 }
 
+/**
+ * @param {string[]} [legacyNames]
+ * @param {{ staffOnly?: boolean }} [options] staffOnly defaults true (log channels).
+ *   Pass staffOnly:false for public boards like #server-status.
+ */
 async function ensureTextChannel(
   discordGuild,
   category,
   channelName,
   topic,
   existingChannelId,
-  legacyNames = []
+  legacyNames = [],
+  options = {}
 ) {
+  const staffOnly = options.staffOnly !== false;
+
   if (existingChannelId) {
     const existing = await discordGuild.channels
       .fetch(existingChannelId)
@@ -198,6 +341,9 @@ async function ensureTextChannel(
       }
       if (topic && existing.topic !== topic) {
         await existing.setTopic(topic).catch(() => null);
+      }
+      if (staffOnly) {
+        await applyLogChannelPermissions(existing, discordGuild);
       }
       return existing;
     }
@@ -217,6 +363,9 @@ async function ensureTextChannel(
     if (topic && byName.topic !== topic) {
       await byName.setTopic(topic).catch(() => null);
     }
+    if (staffOnly) {
+      await applyLogChannelPermissions(byName, discordGuild);
+    }
     return byName;
   }
 
@@ -225,6 +374,9 @@ async function ensureTextChannel(
     type: ChannelType.GuildText,
     parent: category.id,
     topic,
+    ...(staffOnly
+      ? { permissionOverwrites: buildLogChannelOverwrites(discordGuild) }
+      : {}),
     reason: 'Megapithacus feature setup',
   });
 }
@@ -615,13 +767,15 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
     };
     forum = setupExtras.forum;
   } else if (TEXT_LIVE_FEATURES.has(featureKey)) {
+    // Public live boards (e.g. #server-status) — do not staff-lock
     channel = await ensureTextChannel(
       discordGuild,
       category,
       meta.channelName,
       meta.channelTopic,
       guildConfig.featureSetup[featureKey]?.channelId,
-      featureKey === 'popManager' ? ['pop-manager'] : []
+      featureKey === 'popManager' ? ['pop-manager'] : [],
+      { staffOnly: false }
     );
 
     featureState = {
@@ -639,7 +793,9 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       category,
       meta.channelName,
       meta.channelTopic,
-      guildConfig.featureSetup[featureKey]?.channelId
+      guildConfig.featureSetup[featureKey]?.channelId,
+      [],
+      { staffOnly: true }
     );
     featureState = {
       ...featureState,
@@ -647,6 +803,7 @@ async function setupFeature(discordGuild, featureKey, options = {}) {
       ready: true,
     };
   } else {
+    // Ban / donation log forums — staff-only
     forum = await ensureForum(
       discordGuild,
       category,
@@ -758,6 +915,10 @@ module.exports = {
   KNOWN_CHANNEL_NAMES,
   ensureCategory,
   ensureTextChannel,
+  ensureForum,
+  buildLogChannelOverwrites,
+  applyLogChannelPermissions,
+  logChannelPermissionsOk,
   setupFeature,
   ensureMapForums,
   ensureMapForumThreads,
