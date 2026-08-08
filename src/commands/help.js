@@ -60,7 +60,6 @@ module.exports = {
             '`/rollback` — restore Nitrado backup or dated SavedArks `.ark`',
             '`/upload` — upload a custom `.ark` save (Discord size limits apply)',
             '`/gamerscoremanager` — Xbox gamerscore join checks (min score, kick/ban)',
-            '`/spoofmanager` — Xbox gamertag spoof / name mismatch flags',
             '`/donatemanage` — donation methods, links & PayPal sync',
             '`/donate` — post public donation embed',
             '`/playersearch` — live online check + player profile (ban/unban/kick)',
@@ -71,7 +70,7 @@ module.exports = {
         {
           name: 'Server owner',
           value:
-            '`/permissions` — hub to set which roles can use Donations / Rewards / Credits / Gamerscore / Spoof / Server power / Admin Pay (owner only)',
+            '`/permissions` — hub to set which roles can use Donations / Rewards / Credits / Gamerscore / Server power / Admin Pay (owner only)',
         },
         {
           name: 'Feature setup',

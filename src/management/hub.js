@@ -380,7 +380,6 @@ function featureSetupText(guild, key) {
       'Compares Nitrado / in-game displayed name to Xbox Live gamertag on join.'
     );
     extras.push('Flags mismatches only — fail-open on API errors (no punishment).');
-    extras.push('Also `/spoofmanager`.');
   }
 
   const destLine = FEATURE_META[key]?.perMap

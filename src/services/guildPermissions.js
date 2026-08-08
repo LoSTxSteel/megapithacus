@@ -33,12 +33,6 @@ const PERMISSION_AREAS = {
     description: 'Configure Xbox gamerscore join checks and punishments',
     commandHint: '`/gamerscoremanager`',
   },
-  spoofManager: {
-    key: 'spoofManager',
-    label: 'Spoof manager',
-    description: 'Configure Xbox gamertag spoof / name mismatch detection',
-    commandHint: '`/spoofmanager`',
-  },
   adminPay: {
     key: 'adminPay',
     label: 'Admin Pay',
@@ -54,7 +48,6 @@ function defaultPermissions() {
     rewardManager: [],
     creditManager: [],
     gamerscoreManager: [],
-    spoofManager: [],
     adminPay: [],
   };
 }
@@ -69,7 +62,6 @@ function getPermissions(guildId) {
     rewardManager: [...(guild.permissions?.rewardManager || [])],
     creditManager: [...(guild.permissions?.creditManager || [])],
     gamerscoreManager: [...(guild.permissions?.gamerscoreManager || [])],
-    spoofManager: [...(guild.permissions?.spoofManager || [])],
     adminPay: [...(guild.permissions?.adminPay || [])],
   };
 }
@@ -160,10 +152,6 @@ function canManageGamerscore(interaction) {
   return canAccessArea(interaction, 'gamerscoreManager');
 }
 
-function canManageSpoof(interaction) {
-  return canAccessArea(interaction, 'spoofManager');
-}
-
 function canManageAdminPay(interaction) {
   if (memberHasBotSetupRole(interaction)) return true;
   return canAccessArea(interaction, 'adminPay');
@@ -215,7 +203,6 @@ module.exports = {
   canManageRewards,
   canManageCredits,
   canManageGamerscore,
-  canManageSpoof,
   canManageAdminPay,
   canUsePay,
   canModeratePlayers,

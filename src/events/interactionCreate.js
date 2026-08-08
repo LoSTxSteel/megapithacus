@@ -74,16 +74,6 @@ function tryGamerscoreHubInteraction(interaction) {
   }
 }
 
-function trySpoofHubInteraction(interaction) {
-  try {
-    const { handleSpoofManagerInteraction } = require('../management/spoofHub');
-    return handleSpoofManagerInteraction(interaction);
-  } catch (error) {
-    console.warn('Spoof hub unavailable:', error.message);
-    return false;
-  }
-}
-
 function trySaveHubInteraction(interaction) {
   try {
     const { handleSaveHubInteraction } = require('../management/saveHub');
@@ -169,10 +159,6 @@ module.exports = {
       }
 
       if (await tryGamerscoreHubInteraction(interaction)) {
-        return;
-      }
-
-      if (await trySpoofHubInteraction(interaction)) {
         return;
       }
 

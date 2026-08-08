@@ -175,7 +175,6 @@ function defaultGuild() {
       rewardManager: [],
       creditManager: [],
       gamerscoreManager: [],
-      spoofManager: [],
       adminPay: [],
     },
     credits: defaultCredits(),
@@ -318,7 +317,6 @@ function getGuild(guildId) {
       rewardManager: current.permissions?.rewardManager || [],
       creditManager: current.permissions?.creditManager || [],
       gamerscoreManager: current.permissions?.gamerscoreManager || [],
-      spoofManager: current.permissions?.spoofManager || [],
       adminPay: current.permissions?.adminPay || [],
     },
     gamerscoreDetection: {
