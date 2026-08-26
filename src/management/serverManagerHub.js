@@ -21,6 +21,7 @@ const {
   getGuildClusterSnapshot,
   queryService,
 } = require('../services/nitrado');
+const { MAX_LEN, broadcastOnCluster, broadcastOnServers } = require('../services/gameBroadcast');
 const { guildEmbed, errorEmbed } = require('../utils/embeds');
 const { ADMIN_ROLE_NAME } = require('../services/botSetup');
 
@@ -179,6 +180,11 @@ function bulkButtons(disabled = false) {
       .setCustomId(`${PREFIX}bulk:stop`)
       .setLabel('Stop all')
       .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`${PREFIX}broadcast:all`)
+      .setLabel('Broadcast all')
+      .setStyle(ButtonStyle.Secondary)
       .setDisabled(disabled)
   );
 }
@@ -235,6 +241,11 @@ function serverActionButtons(serviceId) {
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(disabled),
       new ButtonBuilder()
+        .setCustomId(`${PREFIX}broadcast:${id}`)
+        .setLabel('Broadcast')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled),
+      new ButtonBuilder()
         .setCustomId(`${PREFIX}back`)
         .setLabel('Back')
         .setStyle(ButtonStyle.Secondary)
@@ -253,7 +264,7 @@ async function buildServerManagerMessage(
   const statusMap = await fetchServerStatuses(guild);
 
   const lines = [
-    'Manage synced **Nitrado** ASE servers — power, join/admin password, and display name.',
+    'Manage synced **Nitrado** ASE servers — power, join/admin password, display name, and in-game **broadcast**.',
     `Requires **Manage Server**, **${ADMIN_ROLE_NAME}**, or a **Server power** role.`,
     '',
     `Allowed roles: ${formatAreaRoles(guildId, 'serverPower')}`,
@@ -341,6 +352,24 @@ function adminPasswordModal(serviceId) {
           .setRequired(false)
           .setMaxLength(64)
           .setPlaceholder('Leave blank to remove admin password')
+      )
+    );
+}
+
+function broadcastModal(targetId) {
+  return new ModalBuilder()
+    .setCustomId(`${PREFIX}modal:broadcast:${targetId}`)
+    .setTitle(targetId === 'all' ? 'Broadcast all maps' : 'In-game broadcast')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('message')
+          .setLabel('Message shown to players')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMinLength(1)
+          .setMaxLength(MAX_LEN)
+          .setPlaceholder('Shown as a server-wide broadcast on the selected map(s)')
       )
     );
 }
@@ -552,6 +581,59 @@ async function handleServerManagerInteraction(interaction) {
       // Prefill from stored label if live query fails
     }
     await interaction.showModal(nameModal(serviceId, currentName));
+    return true;
+  }
+
+  if (interaction.isButton() && id.startsWith(`${PREFIX}broadcast:`)) {
+    const target = id.slice(`${PREFIX}broadcast:`.length);
+    if (!target || target === 'none') return true;
+    const guild = getGuild(guildId);
+    if (target !== 'all' && !findServer(guild, target)) {
+      await interaction.reply({
+        embeds: [errorEmbed('That server is no longer synced.')],
+        ...EPHEMERAL,
+      });
+      return true;
+    }
+    if (target === 'all' && !listServers(guild).length) {
+      await interaction.reply({
+        embeds: [errorEmbed('No synced servers to broadcast to.')],
+        ...EPHEMERAL,
+      });
+      return true;
+    }
+    await interaction.showModal(broadcastModal(target));
+    return true;
+  }
+
+  if (interaction.isModalSubmit() && id.startsWith(`${PREFIX}modal:broadcast:`)) {
+    const target = id.slice(`${PREFIX}modal:broadcast:`.length);
+    const guild = getGuild(guildId);
+    const message = interaction.fields.getTextInputValue('message') ?? '';
+    await interaction.deferUpdate();
+
+    let result;
+    if (target === 'all') {
+      result = await broadcastOnCluster(guild, message);
+    } else {
+      const server = findServer(guild, target);
+      if (!server) {
+        await interaction.editReply(
+          await buildServerManagerMessage(guildId, {
+            content: 'That server is no longer synced.',
+          })
+        );
+        return true;
+      }
+      result = await broadcastOnServers(guild, [server], message);
+    }
+
+    await interaction.editReply(
+      await buildServerManagerMessage(guildId, {
+        selectedId: target === 'all' ? null : target,
+        content: result.summary,
+      })
+    );
     return true;
   }
 

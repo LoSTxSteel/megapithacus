@@ -8,7 +8,7 @@ const { ADMIN_ROLE_NAME } = require('../services/botSetup');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('servermanager')
-    .setDescription('Manage Nitrado servers — power, password, and name')
+    .setDescription('Manage Nitrado servers — power, password, name, and broadcast')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {

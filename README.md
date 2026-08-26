@@ -16,6 +16,7 @@ Discord bot for **ARK: Survival Evolved (Microsoft Store)** clusters hosted on *
 - Admin / Chat logging: one forum post per map, refresh every 15 minutes
 - Player backend DB: logs joins (gamertag, IGN, implant, tribe, map, …)
 - `/playersearch` — admin lookup + ban/unban/kick
+- `/broadcast` — in-game cluster-wide broadcast (also in `/servermanager`)
 - `/pay` — Admin Pay for permitted roles
 - `/permissions` — owner-only role gates for Admin Pay
 - `/help` — command overview
